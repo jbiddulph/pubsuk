@@ -78,6 +78,7 @@ extension Color {
 struct ContentView: View {
     @State private var selectedTab = 0
     @State private var selectedVenueFromEvent: Venue? = nil
+    @State private var isDashboardPresented = false
     var body: some View {
         TabView(selection: $selectedTab) {
             NavigationView {
@@ -152,6 +153,30 @@ struct ContentView: View {
                 }
             }
             .tag(2)
+            NavigationView {
+                DashboardView()
+                    .navigationTitle("Dashboard")
+                    .toolbar {
+                        ToolbarItem(placement: .principal) {
+                            Text("Dashboard")
+                                .font(.custom("Kanit-Bold", size: 30))
+                                .foregroundColor(.appWhite)
+                                .padding(.horizontal, 16)
+                                .padding(.vertical, 12)
+                        }
+                    }
+                    .background(Color.darkBlue)
+            }
+            .tabItem {
+                Label {
+                    Text("Dashboard").font(.custom("Kanit-SemiBold", size: 16))
+                        .foregroundColor(selectedTab == 3 ? .primaryOrange : .appWhite.opacity(0.8))
+                } icon: {
+                    Image(systemName: "person.crop.circle")
+                        .foregroundColor(selectedTab == 3 ? .primaryOrange : .appWhite.opacity(0.8))
+                }
+            }
+            .tag(3)
         }
         .accentColor(.primaryOrange)
         .background(Color.secondaryBlue)
@@ -630,6 +655,196 @@ extension Venue: Equatable {
 extension Venue: Hashable {
     func hash(into hasher: inout Hasher) {
         hasher.combine(id)
+    }
+}
+
+// Struct for inserting a new user row
+struct NewUser: Encodable {
+    let id: String
+    let email: String
+    let name: String
+    let role: String
+}
+
+// DashboardView for authentication and user profile
+struct DashboardView: View {
+    @State private var email = ""
+    @State private var password = ""
+    @State private var name = ""
+    @State private var isSignUp = false
+    @State private var isLoading = false
+    @State private var error: String? = nil
+    @State private var user: User? = nil
+    @State private var userRole: String? = nil
+    let client = SupabaseClient(
+        supabaseURL: URL(string: "https://isprmebbahzjnrekkvxv.supabase.co")!,
+        supabaseKey: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImlzcHJtZWJiYWh6am5yZWtrdnh2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3MDgxMTcxOTQsImV4cCI6MjAyMzY5MzE5NH0.KQTIMSGTyNruxx1VQw8cY67ipbh1mABhjJ9tIhxClHE"
+    )
+    var body: some View {
+        VStack(spacing: 24) {
+            if let user = user {
+                VStack(spacing: 12) {
+                    Text("Signed in as: \(user.email ?? "Unknown")")
+                        .font(.custom("Kanit-SemiBold", size: 20))
+                        .foregroundColor(.primaryOrange)
+                    if let role = userRole {
+                        Text("Role: \(role)")
+                            .font(.custom("Kanit-Regular", size: 18))
+                            .foregroundColor(.appWhite)
+                    }
+                    Button("Logout") {
+                        logout()
+                    }
+                    .padding()
+                    .background(Color.primaryOrange)
+                    .foregroundColor(.appWhite)
+                    .cornerRadius(8)
+                }
+                .padding()
+                if userRole == "admin" {
+                    Text("Admin Dashboard")
+                        .font(.custom("Kanit-Bold", size: 24))
+                        .foregroundColor(.primaryOrange)
+                    // Add admin-only features here
+                } else if userRole == "guest" {
+                    Text("Guest Dashboard")
+                        .font(.custom("Kanit-Bold", size: 24))
+                        .foregroundColor(.primaryOrange)
+                    // Add guest-only features here
+                }
+            } else {
+                VStack(spacing: 16) {
+                    Text(isSignUp ? "Sign Up" : "Sign In")
+                        .font(.custom("Kanit-Bold", size: 24))
+                        .foregroundColor(.primaryOrange)
+                    if isSignUp {
+                        TextField("Name", text: $name)
+                            .textFieldStyle(RoundedBorderTextFieldStyle())
+                            .autocapitalization(.words)
+                    }
+                    TextField("Email", text: $email)
+                        .textFieldStyle(RoundedBorderTextFieldStyle())
+                        .autocapitalization(.none)
+                        .keyboardType(.emailAddress)
+                    SecureField("Password", text: $password)
+                        .textFieldStyle(RoundedBorderTextFieldStyle())
+                    if let error = error {
+                        Text(error)
+                            .foregroundColor(.red)
+                    }
+                    Button(isSignUp ? "Sign Up" : "Sign In") {
+                        isSignUp ? signUp() : signIn()
+                    }
+                    .padding()
+                    .background(Color.primaryOrange)
+                    .foregroundColor(.appWhite)
+                    .cornerRadius(8)
+                    Button(isSignUp ? "Have an account? Sign In" : "No account? Sign Up") {
+                        isSignUp.toggle()
+                    }
+                    .foregroundColor(.primaryOrange)
+                }
+                .padding()
+            }
+        }
+        .onAppear(perform: loadUser)
+        .background(Color.darkBlue)
+        .font(.custom("Kanit-Regular", size: 20))
+    }
+    func loadUser() {
+        Task {
+            do {
+                let session = try await client.auth.session
+                self.user = session.user
+                fetchUserRole(userId: session.user.id.uuidString)
+            } catch {
+                self.user = nil
+                self.userRole = nil
+            }
+        }
+    }
+    func signIn() {
+        isLoading = true
+        error = nil
+        Task {
+            do {
+                let session = try await client.auth.signIn(email: email, password: password)
+                DispatchQueue.main.async {
+                    self.user = session.user
+                    fetchUserRole(userId: session.user.id.uuidString)
+                    isLoading = false
+                }
+            } catch {
+                DispatchQueue.main.async {
+                    self.error = error.localizedDescription
+                    isLoading = false
+                }
+            }
+        }
+    }
+    func signUp() {
+        isLoading = true
+        error = nil
+        Task {
+            do {
+                let session = try await client.auth.signUp(email: email, password: password)
+                let user = session.user
+                // Insert into users table
+                let userName = name.isEmpty ? (user.email ?? "") : name
+                let newUser = NewUser(id: user.id.uuidString, email: user.email ?? "", name: userName, role: "guest")
+                _ = try await client
+                    .from("users")
+                    .insert([newUser])
+                    .execute()
+                DispatchQueue.main.async {
+                    self.user = user
+                    fetchUserRole(userId: user.id.uuidString)
+                    isLoading = false
+                }
+            } catch {
+                DispatchQueue.main.async {
+                    self.error = error.localizedDescription
+                    isLoading = false
+                }
+            }
+        }
+    }
+    func logout() {
+        Task {
+            do {
+                try await client.auth.signOut()
+                DispatchQueue.main.async {
+                    self.user = nil
+                    self.userRole = nil
+                }
+            } catch {
+                DispatchQueue.main.async {
+                    self.error = error.localizedDescription
+                }
+            }
+        }
+    }
+    func fetchUserRole(userId: String) {
+        Task {
+            do {
+                let response = try await client
+                    .from("users")
+                    .select("role")
+                    .eq("id", value: userId)
+                    .single()
+                    .execute()
+                if let data = try? JSONSerialization.jsonObject(with: response.data, options: []) as? [String: Any],
+                   let role = data["role"] as? String {
+                    DispatchQueue.main.async {
+                        self.userRole = role
+                    }
+                }
+            } catch {
+                DispatchQueue.main.async {
+                    self.userRole = nil
+                }
+            }
+        }
     }
 }
 
