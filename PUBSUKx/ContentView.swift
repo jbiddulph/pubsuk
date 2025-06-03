@@ -11,38 +11,153 @@ import MapKit
 
 struct Venue: Identifiable, Decodable {
     let id: Int
+    let fsa_id: Int?
     let venuename: String
+    let slug: String?
+    let venuetype: String?
     let address: String
+    let address2: String?
     let town: String
     let county: String
     let postcode: String
-    let website: String?
-    let photo: String?
+    let postalsearch: String?
+    let telephone: String?
+    let easting: String?
+    let northing: String?
     let latitude: String?
     let longitude: String?
-    let venuetype: String?
+    let local_authority: String?
+    let website: String?
+    let photo: String?
+    let is_live: String?
+    let created_at: String?
+    let updated_at: String?
+}
+
+struct Event: Identifiable, Decodable {
+    let id: Int
+    let event_title: String
+    let event_start: String?
+    let description: String?
+    let listingId: Int?
+    let venue: Venue?
+}
+
+// MARK: - Color Extension
+extension Color {
+    static let secondaryBlue = Color(hex: "#1E2937")
+    static let darkBlue = Color(hex: "#111827")
+    static let primaryOrange = Color(hex: "#F59E0B")
+    static let appWhite = Color(hex: "#FFFFFF")
+}
+
+extension Color {
+    init(hex: String) {
+        let hex = hex.trimmingCharacters(in: CharacterSet.alphanumerics.inverted)
+        var int: UInt64 = 0
+        Scanner(string: hex).scanHexInt64(&int)
+        let a, r, g, b: UInt64
+        switch hex.count {
+        case 6: // RGB (24-bit)
+            (a, r, g, b) = (255, (int >> 16) & 0xFF, (int >> 8) & 0xFF, int & 0xFF)
+        case 8: // ARGB (32-bit)
+            (a, r, g, b) = ((int >> 24) & 0xFF, (int >> 16) & 0xFF, (int >> 8) & 0xFF, int & 0xFF)
+        default:
+            (a, r, g, b) = (255, 0, 0, 0)
+        }
+        self.init(
+            .sRGB,
+            red: Double(r) / 255,
+            green: Double(g) / 255,
+            blue: Double(b) / 255,
+            opacity: Double(a) / 255
+        )
+    }
 }
 
 struct ContentView: View {
     @State private var selectedTab = 0
+    @State private var selectedVenueFromEvent: Venue? = nil
     var body: some View {
         TabView(selection: $selectedTab) {
             NavigationView {
                 VenuesListView()
                     .navigationTitle("Venues")
+                    .toolbar {
+                        ToolbarItem(placement: .principal) {
+                            Text("Venues")
+                                .font(.custom("Kanit-Bold", size: 30))
+                                .foregroundColor(.appWhite)
+                                .padding(.horizontal, 16)
+                                .padding(.vertical, 12)
+                        }
+                    }
+                    .background(Color.darkBlue)
             }
             .tabItem {
-                Label("List", systemImage: "list.bullet")
+                Label {
+                    Text("List").font(.custom("Kanit-SemiBold", size: 16))
+                        .foregroundColor(selectedTab == 0 ? .primaryOrange : .appWhite.opacity(0.8))
+                } icon: {
+                    Image(systemName: "list.bullet")
+                        .foregroundColor(selectedTab == 0 ? .primaryOrange : .appWhite.opacity(0.8))
+                }
             }
             .tag(0)
             NavigationView {
                 VenueMapView(selectedTab: $selectedTab)
                     .navigationTitle("Map")
+                    .toolbar {
+                        ToolbarItem(placement: .principal) {
+                            Text("Map")
+                                .font(.custom("Kanit-Bold", size: 30))
+                                .foregroundColor(.appWhite)
+                                .padding(.horizontal, 16)
+                                .padding(.vertical, 12)
+                        }
+                    }
+                    .background(Color.appWhite)
             }
             .tabItem {
-                Label("Map", systemImage: "map")
+                Label {
+                    Text("Map").font(.custom("Kanit-SemiBold", size: 16))
+                        .foregroundColor(selectedTab == 1 ? .primaryOrange : .appWhite.opacity(0.8))
+                } icon: {
+                    Image(systemName: "map")
+                        .foregroundColor(selectedTab == 1 ? .primaryOrange : .appWhite.opacity(0.8))
+                }
             }
             .tag(1)
+            NavigationView {
+                EventsListView(selectedVenueFromEvent: $selectedVenueFromEvent)
+                    .navigationTitle("Events")
+                    .toolbar {
+                        ToolbarItem(placement: .principal) {
+                            Text("Events")
+                                .font(.custom("Kanit-Bold", size: 30))
+                                .foregroundColor(.appWhite)
+                                .padding(.horizontal, 16)
+                                .padding(.vertical, 12)
+                        }
+                    }
+                    .background(Color.darkBlue)
+            }
+            .tabItem {
+                Label {
+                    Text("Events").font(.custom("Kanit-SemiBold", size: 16))
+                        .foregroundColor(selectedTab == 2 ? .primaryOrange : .appWhite.opacity(0.8))
+                } icon: {
+                    Image(systemName: "calendar")
+                        .foregroundColor(selectedTab == 2 ? .primaryOrange : .appWhite.opacity(0.8))
+                }
+            }
+            .tag(2)
+        }
+        .accentColor(.primaryOrange)
+        .background(Color.secondaryBlue)
+        .font(.custom("Kanit-Regular", size: 20))
+        .sheet(item: $selectedVenueFromEvent) { venue in
+            VenueDetailView(venue: venue, onClose: { selectedVenueFromEvent = nil })
         }
     }
 }
@@ -64,18 +179,39 @@ struct VenuesListView: View {
             if isLoading {
                 ProgressView()
             } else {
-                List(venues) { venue in
-                    Button(action: { selectedVenue = venue }) {
-                        VStack(alignment: .leading) {
-                            Text(venue.venuename).font(.headline)
-                            Text(venue.address)
-                            Text("\(venue.town), \(venue.county), \(venue.postcode)")
-                            if let website = venue.website, !website.isEmpty, website != "NULL" {
-                                Text(website).foregroundColor(.blue)
+                List {
+                    ForEach(venues) { venue in
+                        VStack(spacing: 0) {
+                            Button(action: { selectedVenue = venue }) {
+                                VStack(alignment: .leading) {
+                                    Text(venue.venuename)
+                                        .font(.custom("Kanit-SemiBold", size: 24))
+                                        .foregroundColor(.primaryOrange)
+                                    Text(venue.address)
+                                        .foregroundColor(.appWhite)
+                                    Text("\(venue.town), \(venue.county), \(venue.postcode)")
+                                        .foregroundColor(.appWhite)
+                                    if let website = venue.website, !website.isEmpty, website != "NULL" {
+                                        Text(website).foregroundColor(.primaryOrange)
+                                    }
+                                }
+                                .padding(.horizontal, 16)
+                                .padding(.vertical, 12)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .background(Color.secondaryBlue)
                             }
+                            Rectangle()
+                                .fill(Color.primaryOrange)
+                                .frame(height: 1)
+                                .edgesIgnoringSafeArea(.horizontal)
                         }
+                        .listRowInsets(EdgeInsets())
+                        .background(Color.secondaryBlue)
                     }
                 }
+                .font(.custom("Kanit-Regular", size: 20))
+                .background(Color.secondaryBlue)
+                .listStyle(PlainListStyle())
             }
             HStack {
                 Button("Previous") {
@@ -83,21 +219,43 @@ struct VenuesListView: View {
                         page -= 1
                         fetchVenues()
                     }
-                }.disabled(page == 0 || isLoading)
+                }
+                .disabled(page == 0 || isLoading)
+                .padding(.vertical, 4)
+                .padding(.horizontal, 10)
+                .background(Color.primaryOrange)
+                .foregroundColor(.appWhite)
+                .cornerRadius(8)
+                .font(.custom("Kanit-SemiBold", size: 14))
+                Spacer()
+                // Page number in appWhite
+                Text("Page \(page + 1)")
+                    .foregroundColor(.appWhite)
+                    .font(.custom("Kanit-SemiBold", size: 14))
                 Spacer()
                 Button("Next") {
                     if hasMore {
                         page += 1
                         fetchVenues()
                     }
-                }.disabled(!hasMore || isLoading)
+                }
+                .disabled(!hasMore || isLoading)
+                .padding(.vertical, 4)
+                .padding(.horizontal, 10)
+                .background(Color.primaryOrange)
+                .foregroundColor(.appWhite)
+                .cornerRadius(8)
+                .font(.custom("Kanit-SemiBold", size: 14))
             }
             .padding()
+            .background(Color.darkBlue)
         }
         .onAppear(perform: fetchVenues)
         .sheet(item: $selectedVenue) { venue in
-            VenueDetailView(venue: venue)
+            VenueDetailView(venue: venue, onClose: { selectedVenue = nil })
         }
+        .font(.custom("Kanit-Regular", size: 20))
+        .background(Color.secondaryBlue)
     }
     func fetchVenues() {
         isLoading = true
@@ -142,6 +300,7 @@ struct VenueMapView: View {
     
     var body: some View {
         ZStack {
+            Color.appWhite.ignoresSafeArea()
             ClusteredVenueMapView(viewModel: viewModel)
             VStack {
                 HStack {
@@ -224,51 +383,240 @@ struct VenueMapView: View {
 
 struct VenueDetailView: View {
     let venue: Venue
+    var onClose: (() -> Void)? = nil
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                Text(venue.venuename).font(.largeTitle).bold()
-                Text(venue.address)
-                Text("\(venue.town), \(venue.county), \(venue.postcode)")
-                if let website = venue.website, !website.isEmpty, website != "NULL" {
-                    Link(website, destination: URL(string: website.hasPrefix("http") ? website : "https://\(website)")!)
-                        .foregroundColor(.blue)
-                }
-                if let photo = venue.photo, !photo.isEmpty, photo != "NULL" {
-                    // You may want to adjust the image URL logic for your storage
-                    AsyncImage(url: URL(string: photo.hasPrefix("http") ? photo : "https://isprmebbahzjnrekkvxv.supabase.co/storage/v1/object/public/\(photo)")) { image in
-                        image.resizable().aspectRatio(contentMode: .fit)
-                    } placeholder: {
-                        ProgressView()
-                    }
-                    .frame(maxHeight: 200)
-                }
-                if let latStr = venue.latitude, let lonStr = venue.longitude,
-                   let lat = Double(latStr), let lon = Double(lonStr) {
-                    Map(position: .constant(.region(MKCoordinateRegion(
-                        center: CLLocationCoordinate2D(latitude: lat, longitude: lon),
-                        span: MKCoordinateSpan(latitudeDelta: 0.01, longitudeDelta: 0.01)
-                    )))) {
-                        Annotation("Venue", coordinate: CLLocationCoordinate2D(latitude: lat, longitude: lon)) {
-                            Image(systemName: "mappin.circle.fill")
-                                .foregroundColor(.red)
-                                .font(.title)
+        ZStack(alignment: .topTrailing) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    Text(venue.venuename)
+                        .font(.custom("Kanit-Bold", size: 30))
+                        .foregroundColor(.primaryOrange)
+                    Group {
+                        if let slug = venue.slug, !slug.isEmpty {
+                            Text("Slug: \(slug)")
+                        }
+                        if let fsa = venue.fsa_id {
+                            Text("FSA ID: \(fsa)")
+                        }
+                        if let isLive = venue.is_live, !isLive.isEmpty {
+                            Text("Live: \(isLive)")
                         }
                     }
-                    .frame(height: 250)
-                } else {
-                    Text("No map location available.").foregroundColor(.secondary)
+                    .font(.custom("Kanit-Regular", size: 20))
+                    Text(venue.address)
+                        .foregroundColor(.appWhite)
+                    if let address2 = venue.address2, !address2.isEmpty {
+                        Text(address2).foregroundColor(.appWhite)
+                    }
+                    Text("\(venue.town), \(venue.county), \(venue.postcode)")
+                        .foregroundColor(.appWhite)
+                    if let postalsearch = venue.postalsearch, !postalsearch.isEmpty {
+                        Text("Postal Search: \(postalsearch)").foregroundColor(.appWhite)
+                    }
+                    if let telephone = venue.telephone, !telephone.isEmpty {
+                        Text("Tel: \(telephone)").foregroundColor(.appWhite)
+                    }
+                    if let website = venue.website, !website.isEmpty, website != "NULL" {
+                        Link(website, destination: URL(string: website.hasPrefix("http") ? website : "https://\(website)")!)
+                            .foregroundColor(.primaryOrange)
+                    }
+                    if let photo = venue.photo, !photo.isEmpty, photo != "NULL" {
+                        AsyncImage(url: URL(string: photo.hasPrefix("http") ? photo : "https://isprmebbahzjnrekkvxv.supabase.co/storage/v1/object/public/\(photo)")) { image in
+                            image.resizable().aspectRatio(contentMode: .fit)
+                        } placeholder: {
+                            ProgressView()
+                        }
+                        .frame(maxHeight: 200)
+                    }
+                    if let latStr = venue.latitude, let lonStr = venue.longitude,
+                       let lat = Double(latStr), let lon = Double(lonStr) {
+                        Map(position: .constant(.region(MKCoordinateRegion(
+                            center: CLLocationCoordinate2D(latitude: lat, longitude: lon),
+                            span: MKCoordinateSpan(latitudeDelta: 0.01, longitudeDelta: 0.01)
+                        )))) {
+                            Annotation("Venue", coordinate: CLLocationCoordinate2D(latitude: lat, longitude: lon)) {
+                                Image(systemName: "mappin.circle.fill")
+                                    .foregroundColor(.primaryOrange)
+                                    .font(.title)
+                            }
+                        }
+                        .frame(height: 250)
+                    } else {
+                        Text("No map location available.").foregroundColor(.secondary)
+                    }
+                    Divider()
+                    Group {
+                        if let venuetype = venue.venuetype, !venuetype.isEmpty {
+                            Text("Type: \(venuetype)")
+                        }
+                        if let localAuth = venue.local_authority, !localAuth.isEmpty {
+                            Text("Local Authority: \(localAuth)")
+                        }
+                        if let easting = venue.easting, !easting.isEmpty {
+                            Text("Easting: \(easting)")
+                        }
+                        if let northing = venue.northing, !northing.isEmpty {
+                            Text("Northing: \(northing)")
+                        }
+                        if let lat = venue.latitude, !lat.isEmpty {
+                            Text("Latitude: \(lat)")
+                        }
+                        if let lon = venue.longitude, !lon.isEmpty {
+                            Text("Longitude: \(lon)")
+                        }
+                        if let created = venue.created_at, !created.isEmpty {
+                            Text("Created: \(created)")
+                        }
+                        if let updated = venue.updated_at, !updated.isEmpty {
+                            Text("Updated: \(updated)")
+                        }
+                    }
+                    .font(.custom("Kanit-Regular", size: 20))
                 }
-                Divider()
-                Group {
-                    Text("Type: \(venue.venuetype ?? "N/A")")
-                    Text("Local Authority: N/A")
-                    Text("Created: N/A")
-                    Text("Updated: N/A")
+                .padding()
+                .font(.custom("Kanit-Regular", size: 20))
+                .background(Color.secondaryBlue)
+            }
+            .font(.custom("Kanit-Regular", size: 20))
+            .background(Color.secondaryBlue)
+            if let onClose = onClose {
+                Button(action: { onClose() }) {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.title)
+                        .foregroundColor(.appWhite)
+                        .padding(16)
                 }
             }
+        }
+    }
+}
+
+struct EventsListView: View {
+    @State private var events: [Event] = []
+    @State private var page: Int = 0
+    @State private var isLoading = false
+    @State private var hasMore = true
+    @Binding var selectedVenueFromEvent: Venue?
+    let pageSize = 50
+    let client = SupabaseClient(
+        supabaseURL: URL(string: "https://isprmebbahzjnrekkvxv.supabase.co")!,
+        supabaseKey: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImlzcHJtZWJiYWh6am5yZWtrdnh2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3MDgxMTcxOTQsImV4cCI6MjAyMzY5MzE5NH0.KQTIMSGTyNruxx1VQw8cY67ipbh1mABhjJ9tIhxClHE"
+    )
+    var body: some View {
+        VStack {
+            if isLoading {
+                ProgressView()
+            } else {
+                List {
+                    ForEach(events) { event in
+                        VStack(spacing: 0) {
+                            VStack(alignment: .leading) {
+                                Text(event.event_title)
+                                    .font(.custom("Kanit-SemiBold", size: 24))
+                                    .foregroundColor(.primaryOrange)
+                                if let date = event.event_start {
+                                    Text(date).font(.subheadline)
+                                        .foregroundColor(.appWhite)
+                                }
+                                if let venue = event.venue {
+                                    Button(action: { selectedVenueFromEvent = venue }) {
+                                        Text("Venue: \(venue.venuename)")
+                                            .font(.caption)
+                                            .foregroundColor(.primaryOrange)
+                                            .underline()
+                                    }
+                                    .buttonStyle(PlainButtonStyle())
+                                }
+                                if let desc = event.description, !desc.isEmpty {
+                                    Text(desc).font(.caption).foregroundColor(.secondary)
+                                }
+                            }
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 12)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(Color.secondaryBlue)
+                            Rectangle()
+                                .fill(Color.primaryOrange)
+                                .frame(height: 1)
+                                .edgesIgnoringSafeArea(.horizontal)
+                        }
+                        .listRowInsets(EdgeInsets())
+                        .background(Color.secondaryBlue)
+                    }
+                }
+                .font(.custom("Kanit-Regular", size: 20))
+                .background(Color.secondaryBlue)
+                .listStyle(PlainListStyle())
+            }
+            HStack {
+                Button("Previous") {
+                    if page > 0 {
+                        page -= 1
+                        fetchEvents()
+                    }
+                }
+                .disabled(page == 0 || isLoading)
+                .padding(.vertical, 4)
+                .padding(.horizontal, 10)
+                .background(Color.primaryOrange)
+                .foregroundColor(.appWhite)
+                .cornerRadius(8)
+                .font(.custom("Kanit-SemiBold", size: 14))
+                Spacer()
+                // Page number in appWhite
+                Text("Page \(page + 1)")
+                    .foregroundColor(.appWhite)
+                    .font(.custom("Kanit-SemiBold", size: 14))
+                Spacer()
+                Button("Next") {
+                    if hasMore {
+                        page += 1
+                        fetchEvents()
+                    }
+                }
+                .disabled(!hasMore || isLoading)
+                .padding(.vertical, 4)
+                .padding(.horizontal, 10)
+                .background(Color.primaryOrange)
+                .foregroundColor(.appWhite)
+                .cornerRadius(8)
+                .font(.custom("Kanit-SemiBold", size: 14))
+            }
             .padding()
+            .background(Color.darkBlue)
+        }
+        .onAppear(perform: fetchEvents)
+        .font(.custom("Kanit-Regular", size: 20))
+        .background(Color.secondaryBlue)
+    }
+    func fetchEvents() {
+        isLoading = true
+        hasMore = true
+        events = []
+        Task {
+            do {
+                let from = page * pageSize
+                let to = from + pageSize - 1
+                let response = try await client
+                    .from("Event")
+                    .select("*, venue:Venue!Event_listingId_fkey(*)")
+                    .order("event_start", ascending: true)
+                    .range(from: from, to: to)
+                    .execute()
+                let decoded = try JSONDecoder().decode([Event].self, from: response.data)
+                DispatchQueue.main.async {
+                    events = decoded
+                    hasMore = decoded.count == pageSize
+                    isLoading = false
+                }
+            } catch {
+                DispatchQueue.main.async {
+                    events = []
+                    hasMore = false
+                    isLoading = false
+                }
+            }
         }
     }
 }

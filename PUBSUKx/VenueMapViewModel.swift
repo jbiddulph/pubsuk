@@ -2,6 +2,14 @@ import Foundation
 import MapKit
 import Supabase
 
+struct CountyOnly: Decodable {
+    let county: String?
+}
+
+struct AuthorityOnly: Decodable {
+    let local_authority: String?
+}
+
 struct VenueAnnotation: Identifiable {
     let id: Int
     let coordinate: CLLocationCoordinate2D
@@ -16,6 +24,8 @@ class VenueMapViewModel: NSObject, ObservableObject {
     @Published var selectedVenue: Venue? = nil
     @Published var allVenues: [Venue] = []
     @Published var tooManyMarkers: Bool = false
+    @Published var regions: [String] = []
+    @Published var authoritiesByRegion: [String: [String]] = [:]
     let markerLimit = 1000
     let client = SupabaseClient(
         supabaseURL: URL(string: "https://isprmebbahzjnrekkvxv.supabase.co")!,
@@ -25,6 +35,7 @@ class VenueMapViewModel: NSObject, ObservableObject {
     override init() {
         super.init()
         Task { await fetchAllVenues() }
+        Task { await fetchRegions() }
     }
 
     func fetchAllVenues() async {
@@ -93,6 +104,62 @@ class VenueMapViewModel: NSObject, ObservableObject {
     func regionDidChange(_ region: MKCoordinateRegion) {
         DispatchQueue.main.async {
             self.region = region
+            self.updateVisibleMarkers()
+        }
+    }
+
+    func fetchRegions() async {
+        do {
+            let response = try await client
+                .from("Venue")
+                .select("county")
+                .execute()
+            let counties = try JSONDecoder().decode([CountyOnly].self, from: response.data)
+            let regionSet = Set(counties.compactMap { $0.county?.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines) }).filter { !$0.isEmpty }
+            let sortedRegions = Array(regionSet).sorted()
+            DispatchQueue.main.async {
+                self.regions = sortedRegions
+            }
+        } catch {
+            DispatchQueue.main.async {
+                self.error = "Failed to fetch regions: \(error.localizedDescription)"
+            }
+        }
+    }
+
+    func fetchAuthorities(for region: String) async {
+        do {
+            let response = try await client
+                .from("Venue")
+                .select("local_authority, county")
+                .eq("county", value: region)
+                .execute()
+            let authorities = try JSONDecoder().decode([AuthorityOnly].self, from: response.data)
+            let authoritySet = Set(authorities.compactMap { $0.local_authority?.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines) }).filter { !$0.isEmpty }
+            let sortedAuthorities = Array(authoritySet).sorted()
+            DispatchQueue.main.async {
+                self.authoritiesByRegion[region] = sortedAuthorities
+            }
+        } catch {
+            DispatchQueue.main.async {
+                self.error = "Failed to fetch authorities: \(error.localizedDescription)"
+            }
+        }
+    }
+
+    func filterVenues(region: String?, authority: String?) {
+        let filtered: [Venue]
+        if let region = region, !region.isEmpty {
+            if let authority = authority, !authority.isEmpty {
+                filtered = allVenues.filter { $0.county == region && $0.local_authority == authority }
+            } else {
+                filtered = allVenues.filter { $0.county == region }
+            }
+        } else {
+            filtered = allVenues
+        }
+        DispatchQueue.main.async {
+            self.allVenues = filtered
             self.updateVisibleMarkers()
         }
     }
