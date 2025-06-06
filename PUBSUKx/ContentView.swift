@@ -221,8 +221,24 @@ struct VenuesListView: View {
         supabaseURL: URL(string: "https://isprmebbahzjnrekkvxv.supabase.co")!,
         supabaseKey: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImlzcHJtZWJiYWh6am5yZWtrdnh2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3MDgxMTcxOTQsImV4cCI6MjAyMzY5MzE5NH0.KQTIMSGTyNruxx1VQw8cY67ipbh1mABhjJ9tIhxClHE"
     )
+    // Filter states
+    @State private var showFilterMenu = false
+    @State private var selectedCounty: String? = nil
+    @State private var counties: [String] = []
+    @State private var selectedTown: String? = nil
+    @State private var towns: [String] = []
     var body: some View {
         VStack {
+            HStack {
+                Spacer()
+                Button(action: { showFilterMenu.toggle() }) {
+                    Image(systemName: "line.3.horizontal.decrease.circle")
+                        .font(.title2)
+                        .foregroundColor(.primaryOrange)
+                        .padding(8)
+                }
+            }
+            .padding(.horizontal)
             if isLoading {
                 ProgressView()
             } else {
@@ -295,7 +311,50 @@ struct VenuesListView: View {
             .padding()
             .background(Color.darkBlue)
         }
-        .onAppear(perform: fetchVenues)
+        .onAppear {
+            fetchVenues()
+            loadCounties()
+        }
+        .sheet(isPresented: $showFilterMenu) {
+            NavigationView {
+                Form {
+                    Picker("County", selection: $selectedCounty) {
+                        Text("Any").tag(nil as String?)
+                        ForEach(counties, id: \ .self) { county in
+                            Text(county).tag(Optional(county))
+                        }
+                    }
+                    .onChange(of: selectedCounty) { newCounty in
+                        selectedTown = nil
+                        if let county = newCounty {
+                            fetchTowns(for: county)
+                        } else {
+                            towns = []
+                        }
+                    }
+                    if !towns.isEmpty {
+                        Picker("Town", selection: $selectedTown) {
+                            Text("Any").tag(nil as String?)
+                            ForEach(towns, id: \ .self) { town in
+                                Text(town).tag(Optional(town))
+                            }
+                        }
+                    }
+                }
+                .navigationBarTitle("Filter by County & Town", displayMode: .inline)
+                .navigationBarItems(
+                    leading: Button("Clear") {
+                        selectedCounty = nil
+                        selectedTown = nil
+                        towns = []
+                    },
+                    trailing: Button("Apply") {
+                        showFilterMenu = false
+                        fetchVenues()
+                    }
+                )
+            }
+        }
         .sheet(item: $selectedVenue) { venue in
             VenueDetailView(
                 venue: venue,
@@ -315,9 +374,16 @@ struct VenuesListView: View {
             do {
                 let from = page * pageSize
                 let to = from + pageSize - 1
-                let response = try await client
+                var query = client
                     .from("Venue")
-                    .select()
+                    .select("*")
+                if let county = selectedCounty {
+                    query = query.eq("county", value: county)
+                }
+                if let town = selectedTown {
+                    query = query.eq("town", value: town)
+                }
+                let response = try await query
                     .order("id", ascending: true)
                     .range(from: from, to: to)
                     .execute()
@@ -336,6 +402,39 @@ struct VenuesListView: View {
                     isLoading = false
                     print("[DEBUG] Failed to load venues: \(error)")
                 }
+            }
+        }
+    }
+    func loadCounties() {
+        // Load counties.json from the app bundle (no subdirectory)
+        if let url = Bundle.main.url(forResource: "counties", withExtension: "json") {
+            do {
+                let data = try Data(contentsOf: url)
+                let decoded = try JSONDecoder().decode([String].self, from: data)
+                counties = decoded.sorted()
+            } catch {
+                print("Failed to load counties.json: \(error)")
+            }
+        } else {
+            print("counties.json not found in bundle")
+        }
+    }
+    func fetchTowns(for county: String) {
+        Task {
+            do {
+                let response = try await client
+                    .from("Venue")
+                    .select("town")
+                    .eq("county", value: county)
+                    .execute()
+                let decoded = try JSONDecoder().decode([[String: String?]].self, from: response.data)
+                let uniqueTowns = Set(decoded.compactMap { $0["town"] ?? nil }).filter { !$0.isEmpty }
+                DispatchQueue.main.async {
+                    towns = Array(uniqueTowns).sorted()
+                }
+            } catch {
+                print("Failed to fetch towns: \(error)")
+                towns = []
             }
         }
     }
