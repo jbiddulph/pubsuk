@@ -116,10 +116,15 @@ struct ContentView: View {
     @State private var selectedVenueFromEvent: Venue? = nil
     @State private var isDashboardPresented = false
     @State private var userRole: String? = nil
+    @State private var showAddEventModal = false
+    @State private var selectedVenueForEvent: Venue? = nil
     var body: some View {
         TabView(selection: $selectedTab) {
             NavigationView {
-                VenuesListView()
+                VenuesListView(
+                    showAddEventModal: $showAddEventModal,
+                    selectedVenueForEvent: $selectedVenueForEvent
+                )
                     .navigationTitle("Venues")
                     .background(Color.darkBlue)
             }
@@ -134,7 +139,11 @@ struct ContentView: View {
             }
             .tag(0)
             NavigationView {
-                VenueMapView(selectedTab: $selectedTab)
+                VenueMapView(
+                    selectedTab: $selectedTab,
+                    showAddEventModal: $showAddEventModal,
+                    selectedVenueForEvent: $selectedVenueForEvent
+                )
                     .navigationTitle("Map")
                     .background(Color.darkBlue)
             }
@@ -182,13 +191,26 @@ struct ContentView: View {
         .background(Color.secondaryBlue)
         .font(.custom("Kanit-Regular", size: 20))
         .sheet(item: $selectedVenueFromEvent) { venue in
-            VenueDetailView(venue: venue, onClose: { selectedVenueFromEvent = nil })
+            VenueDetailView(
+                venue: venue,
+                onClose: { selectedVenueFromEvent = nil },
+                showAddEventModal: $showAddEventModal,
+                selectedVenueForEvent: $selectedVenueForEvent
+            )
+        }
+        .sheet(isPresented: $showAddEventModal) {
+            AddEventModal(
+                showAddEventModal: $showAddEventModal,
+                selectedVenueForEvent: $selectedVenueForEvent
+            )
         }
     }
 }
 
 // Move the existing list logic into VenuesListView
 struct VenuesListView: View {
+    @Binding var showAddEventModal: Bool
+    @Binding var selectedVenueForEvent: Venue?
     @State private var venues: [Venue] = []
     @State private var page: Int = 0
     @State private var isLoading = false
@@ -275,7 +297,12 @@ struct VenuesListView: View {
         }
         .onAppear(perform: fetchVenues)
         .sheet(item: $selectedVenue) { venue in
-            VenueDetailView(venue: venue, onClose: { selectedVenue = nil })
+            VenueDetailView(
+                venue: venue,
+                onClose: { selectedVenue = nil },
+                showAddEventModal: $showAddEventModal,
+                selectedVenueForEvent: $selectedVenueForEvent
+            )
         }
         .font(.custom("Kanit-Regular", size: 20))
         .background(Color.secondaryBlue)
@@ -319,9 +346,13 @@ struct VenueMapView: View {
     @StateObject private var viewModel = VenueMapViewModel()
     @State private var showMenu = false
     @Binding var selectedTab: Int
+    @Binding var showAddEventModal: Bool
+    @Binding var selectedVenueForEvent: Venue?
     
-    init(selectedTab: Binding<Int>) {
+    init(selectedTab: Binding<Int>, showAddEventModal: Binding<Bool>, selectedVenueForEvent: Binding<Venue?>) {
         self._selectedTab = selectedTab
+        self._showAddEventModal = showAddEventModal
+        self._selectedVenueForEvent = selectedVenueForEvent
     }
     
     var body: some View {
@@ -360,7 +391,12 @@ struct VenueMapView: View {
                 }
             }
             if let venue = viewModel.selectedVenue {
-                VenueDetailView(venue: venue, onClose: { viewModel.selectedVenue = nil })
+                VenueDetailView(
+                    venue: venue,
+                    onClose: { viewModel.selectedVenue = nil },
+                    showAddEventModal: $showAddEventModal,
+                    selectedVenueForEvent: $selectedVenueForEvent
+                )
                     .background(Color(.systemBackground).opacity(0.95))
                     .cornerRadius(16)
                     .shadow(radius: 8)
@@ -411,6 +447,8 @@ struct VenueMapView: View {
 struct VenueDetailView: View {
     let venue: Venue
     var onClose: (() -> Void)? = nil
+    @Binding var showAddEventModal: Bool
+    @Binding var selectedVenueForEvent: Venue?
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
@@ -427,6 +465,22 @@ struct VenueDetailView: View {
                         }
                     }
                 }
+                Button(action: {
+                    selectedVenueForEvent = venue
+                    showAddEventModal = true
+                }) {
+                    HStack {
+                        Image(systemName: "plus.circle.fill")
+                            .foregroundColor(.primaryOrange)
+                        Text("Add Event")
+                            .font(.custom("Kanit-SemiBold", size: 20))
+                            .foregroundColor(.primaryOrange)
+                    }
+                    .padding(8)
+                    .background(Color.secondaryBlue)
+                    .cornerRadius(10)
+                }
+                .padding(.bottom, 8)
                 if let slug = venue.slug, !slug.isEmpty {
                     Text("Slug: \(slug)")
                         .foregroundColor(.appWhite)
@@ -1015,147 +1069,6 @@ struct EventsListView: View {
         }
         .font(.custom("Kanit-Regular", size: 20))
         .background(Color.secondaryBlue)
-        .sheet(isPresented: $showAddEventModal) {
-            NavigationView {
-                VStack(spacing: 20) {
-                    if let addEventError = addEventError {
-                        Text("Error: \(addEventError)")
-                            .foregroundColor(.red)
-                            .padding()
-                            .background(Color.secondaryBlue)
-                            .cornerRadius(8)
-                    }
-                    if selectedVenueForEvent == nil {
-                        Text("Search for Venue")
-                            .font(.custom("Kanit-Bold", size: 22))
-                            .foregroundColor(.primaryOrange)
-                        TextField("Type venue name...", text: $venueSearchText, onEditingChanged: { _ in }, onCommit: { searchVenues() })
-                            .textFieldStyle(RoundedBorderTextFieldStyle())
-                            .onChange(of: venueSearchText) { _ in searchVenues() }
-                        if isVenueSearchLoading {
-                            ProgressView()
-                        } else {
-                            List(venueSearchResults.prefix(100), id: \.id) { venue in
-                                VStack(alignment: .leading) {
-                                    Text(venue.venuename)
-                                        .font(.custom("Kanit-SemiBold", size: 18))
-                                        .foregroundColor(.primaryOrange)
-                                    Text(venue.town)
-                                        .font(.caption)
-                                        .foregroundColor(.appWhite)
-                                }
-                                .contentShape(Rectangle())
-                                .onTapGesture {
-                                    selectedVenueForEvent = venue
-                                }
-                                .listRowBackground(Color.secondaryBlue)
-                            }
-                        }
-                    } else {
-                        Text("Add Event for \(selectedVenueForEvent!.venuename)")
-                            .font(.custom("Kanit-Bold", size: 22))
-                            .foregroundColor(.primaryOrange)
-                        TextField("Event Title", text: $newEventTitle)
-                            .textFieldStyle(RoundedBorderTextFieldStyle())
-                        DatePicker("Event Start", selection: $newEventDateObj, displayedComponents: [.date, .hourAndMinute])
-                            .datePickerStyle(.compact)
-                        TextField("Description", text: $newEventDescription)
-                            .textFieldStyle(RoundedBorderTextFieldStyle())
-                        HStack(spacing: 12) {
-                            TextField("Cost (e.g. 10.00)", text: $newEventCost)
-                                .keyboardType(.decimalPad)
-                                .textFieldStyle(RoundedBorderTextFieldStyle())
-                            TextField("Duration (minutes)", text: $newEventDuration)
-                                .keyboardType(.numberPad)
-                                .textFieldStyle(RoundedBorderTextFieldStyle())
-                        }
-                        HStack(spacing: 12) {
-                            VStack(alignment: .leading) {
-                                Text("Select City")
-                                    .font(.custom("Kanit-Bold", size: 18))
-                                Picker("City", selection: $selectedCity) {
-                                    Text("Select a city").tag(nil as City?)
-                                    ForEach(cities) { city in
-                                        Text(city.name).tag(Optional(city))
-                                    }
-                                }
-                                .pickerStyle(MenuPickerStyle())
-                            }
-                            .frame(maxWidth: .infinity)
-                            VStack(alignment: .leading) {
-                                Text("Select Category")
-                                    .font(.custom("Kanit-Bold", size: 18))
-                                Picker("Category", selection: $selectedCategory) {
-                                    Text("Select a category").tag(nil as Category?)
-                                    ForEach(categories) { category in
-                                        Text(category.name).tag(Optional(category))
-                                    }
-                                }
-                                .pickerStyle(MenuPickerStyle())
-                            }
-                            .frame(maxWidth: .infinity)
-                        }
-                        TextField("Website (optional)", text: $newEventWebsite)
-                            .textFieldStyle(RoundedBorderTextFieldStyle())
-                        HStack(spacing: 12) {
-                            if let selectedImage = selectedImage {
-                                Image(uiImage: selectedImage)
-                                    .resizable()
-                                    .scaledToFit()
-                                    .frame(height: 48)
-                                    .cornerRadius(8)
-                            }
-                            Button(selectedImage == nil ? "Select Photo" : "Change Photo") {
-                                showImagePicker = true
-                            }
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 4)
-                            .font(.custom("Kanit-SemiBold", size: 14))
-                            .background(Color.primaryOrange)
-                            .foregroundColor(.appWhite)
-                            .cornerRadius(8)
-                            .frame(height: 32)
-                        }
-                        HStack {
-                            Button("Cancel") {
-                                resetAddEventForm()
-                                showAddEventModal = false
-                            }
-                            .foregroundColor(.primaryOrange)
-                            Spacer()
-                            Button(isAddingEvent ? "Adding..." : "Add Event") {
-                                addEvent()
-                            }
-                            .disabled(isAddingEvent || selectedCity == nil || selectedCategory == nil || newEventTitle.isEmpty || newEventDateObj == nil)
-                            .padding(.vertical, 8)
-                            .padding(.horizontal, 16)
-                            .background(Color.primaryOrange)
-                            .foregroundColor(.appWhite)
-                            .cornerRadius(8)
-                        }
-                    }
-                }
-                .padding()
-                .background(Color.appWhite.ignoresSafeArea())
-                .navigationBarTitle(selectedVenueForEvent == nil ? "Select Venue" : "Add Event", displayMode: .inline)
-            }
-            .sheet(isPresented: $showImagePicker) {
-                ImagePicker(image: $selectedImage)
-            }
-        }
-        .sheet(item: $selectedEvent) { event in
-            EventDetailView(
-                event: event,
-                userRole: userRole,
-                onClose: {
-                    selectedEvent = nil
-                    fetchEventsWithVenue()
-                },
-                onEventUpdated: {
-                    fetchEventsWithVenue()
-                }
-            )
-        }
     }
     func fetchEventsWithVenue() {
         isLoading = true
@@ -1259,94 +1172,6 @@ struct EventsListView: View {
                 }
             }
         }
-    }
-    func addEvent() {
-        guard let venue = selectedVenueForEvent, let city = selectedCity, let category = selectedCategory else { return }
-        guard let userId = userId else {
-            addEventError = "You must be signed in to add an event."
-            isAddingEvent = false
-            return
-        }
-        isAddingEvent = true
-        addEventError = nil
-        Task {
-            do {
-                var photoPath: String? = nil
-                if let image = selectedImage {
-                    // Upload image to Supabase Storage
-                    if let data = image.jpegData(compressionQuality: 0.8) {
-                        let fileName = "public/event_\(UUID().uuidString).jpg"
-                        let _ = try await client.storage.from("event_images").upload(path: fileName, file: data, options: FileOptions())
-                        photoPath = fileName
-                    }
-                }
-                let formatter = DateFormatter()
-                formatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
-                let eventStartString = formatter.string(from: newEventDateObj)
-                let createdAtString = formatter.string(from: Date())
-                let newEvent = NewEvent(
-                    event_title: newEventTitle,
-                    event_start: eventStartString,
-                    description: newEventDescription,
-                    listingId: venue.id,
-                    cityId: city.id,
-                    categoryId: category.id,
-                    cost: newEventCost,
-                    duration: newEventDuration.isEmpty ? nil : newEventDuration,
-                    website: newEventWebsite.isEmpty ? "" : newEventWebsite,
-                    photo: photoPath,
-                    created_at: createdAtString,
-                    user_id: userId
-                )
-                print("Attempting to add event with:")
-                print("  event_title: \(newEventTitle)")
-                print("  event_start: \(eventStartString)")
-                print("  description: \(newEventDescription)")
-                print("  listingId: \(venue.id)")
-                print("  cityId: \(city.id)")
-                print("  categoryId: \(category.id)")
-                print("  cost: \(newEventCost)")
-                print("  duration: \(newEventDuration)")
-                print("  website: \(newEventWebsite)")
-                print("  photo: \(photoPath ?? "nil")")
-                print("  created_at: \(createdAtString)")
-                print("  user_id: \(userId)")
-                _ = try await client
-                    .from("Event")
-                    .insert([newEvent])
-                    .execute()
-                DispatchQueue.main.async {
-                    isAddingEvent = false
-                    showAddEventModal = false
-                    resetAddEventForm()
-                    fetchEventsWithVenue()
-                }
-            } catch {
-                print("Error adding event: \(error)")
-                DispatchQueue.main.async {
-                    addEventError = error.localizedDescription
-                    isAddingEvent = false
-                }
-            }
-        }
-    }
-    func resetAddEventForm() {
-        venueSearchText = ""
-        venueSearchResults = []
-        selectedVenueForEvent = nil
-        newEventTitle = ""
-        newEventDate = ""
-        newEventDescription = ""
-        addEventError = nil
-        isAddingEvent = false
-        selectedCity = nil
-        selectedCategory = nil
-        newEventCost = ""
-        newEventDuration = ""
-        newEventWebsite = ""
-        newEventPhoto = nil
-        selectedImage = nil
-        newEventDateObj = Date()
     }
 }
 
@@ -1822,6 +1647,294 @@ struct EditEventModal: View {
                 isSaving = false
             }
         }
+    }
+}
+
+// 1. Extract AddEventModal from EventsListView
+struct AddEventModal: View {
+    @Binding var showAddEventModal: Bool
+    @Binding var selectedVenueForEvent: Venue?
+    @State private var venueSearchText = ""
+    @State private var venueSearchResults: [Venue] = []
+    @State private var isVenueSearchLoading = false
+    @State private var newEventTitle = ""
+    @State private var newEventDate = ""
+    @State private var newEventDescription = ""
+    @State private var addEventError: String? = nil
+    @State private var isAddingEvent = false
+    @State private var cities: [City] = []
+    @State private var categories: [Category] = []
+    @State private var selectedCity: City? = nil
+    @State private var selectedCategory: Category? = nil
+    @State private var newEventCost: String = ""
+    @State private var newEventDuration: String = ""
+    @State private var newEventWebsite: String = ""
+    @State private var newEventPhoto: String? = nil
+    @State private var selectedImage: UIImage? = nil
+    @State private var showImagePicker = false
+    @State private var newEventDateObj = Date()
+    @State private var userId: String? = nil
+    let client = SupabaseClient(
+        supabaseURL: URL(string: "https://isprmebbahzjnrekkvxv.supabase.co")!,
+        supabaseKey: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImlzcHJtZWJiYWh6am5yZWtrdnh2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3MDgxMTcxOTQsImV4cCI6MjAyMzY5MzE5NH0.KQTIMSGTyNruxx1VQw8cY67ipbh1mABhjJ9tIhxClHE"
+    )
+    var body: some View {
+        NavigationView {
+            VStack(spacing: 20) {
+                if let addEventError = addEventError {
+                    Text("Error: \(addEventError)")
+                        .foregroundColor(.red)
+                        .padding()
+                        .background(Color.secondaryBlue)
+                        .cornerRadius(8)
+                }
+                if selectedVenueForEvent == nil {
+                    Text("Search for Venue")
+                        .font(.custom("Kanit-Bold", size: 22))
+                        .foregroundColor(.primaryOrange)
+                    TextField("Type venue name...", text: $venueSearchText, onEditingChanged: { _ in }, onCommit: { searchVenues() })
+                        .textFieldStyle(RoundedBorderTextFieldStyle())
+                        .onChange(of: venueSearchText) { _ in searchVenues() }
+                    if isVenueSearchLoading {
+                        ProgressView()
+                    } else {
+                        List(venueSearchResults.prefix(100), id: \ .id) { venue in
+                            VStack(alignment: .leading) {
+                                Text(venue.venuename)
+                                    .font(.custom("Kanit-SemiBold", size: 18))
+                                    .foregroundColor(.primaryOrange)
+                                Text(venue.town)
+                                    .font(.caption)
+                                    .foregroundColor(.appWhite)
+                            }
+                            .contentShape(Rectangle())
+                            .onTapGesture {
+                                selectedVenueForEvent = venue
+                            }
+                            .listRowBackground(Color.secondaryBlue)
+                        }
+                    }
+                } else {
+                    Text("Add Event for \(selectedVenueForEvent!.venuename)")
+                        .font(.custom("Kanit-Bold", size: 22))
+                        .foregroundColor(.primaryOrange)
+                    TextField("Event Title", text: $newEventTitle)
+                        .textFieldStyle(RoundedBorderTextFieldStyle())
+                    DatePicker("Event Start", selection: $newEventDateObj, displayedComponents: [.date, .hourAndMinute])
+                        .datePickerStyle(.compact)
+                    TextField("Description", text: $newEventDescription)
+                        .textFieldStyle(RoundedBorderTextFieldStyle())
+                    HStack(spacing: 12) {
+                        TextField("Cost (e.g. 10.00)", text: $newEventCost)
+                            .keyboardType(.decimalPad)
+                            .textFieldStyle(RoundedBorderTextFieldStyle())
+                        TextField("Duration (minutes)", text: $newEventDuration)
+                            .keyboardType(.numberPad)
+                            .textFieldStyle(RoundedBorderTextFieldStyle())
+                    }
+                    HStack(spacing: 12) {
+                        VStack(alignment: .leading) {
+                            Text("Select City")
+                                .font(.custom("Kanit-Bold", size: 18))
+                            Picker("City", selection: $selectedCity) {
+                                Text("Select a city").tag(nil as City?)
+                                ForEach(cities) { city in
+                                    Text(city.name).tag(Optional(city))
+                                }
+                            }
+                            .pickerStyle(MenuPickerStyle())
+                        }
+                        .frame(maxWidth: .infinity)
+                        VStack(alignment: .leading) {
+                            Text("Select Category")
+                                .font(.custom("Kanit-Bold", size: 18))
+                            Picker("Category", selection: $selectedCategory) {
+                                Text("Select a category").tag(nil as Category?)
+                                ForEach(categories) { category in
+                                    Text(category.name).tag(Optional(category))
+                                }
+                            }
+                            .pickerStyle(MenuPickerStyle())
+                        }
+                        .frame(maxWidth: .infinity)
+                    }
+                    TextField("Website (optional)", text: $newEventWebsite)
+                        .textFieldStyle(RoundedBorderTextFieldStyle())
+                    HStack(spacing: 12) {
+                        if let selectedImage = selectedImage {
+                            Image(uiImage: selectedImage)
+                                .resizable()
+                                .scaledToFit()
+                                .frame(height: 48)
+                                .cornerRadius(8)
+                        }
+                        Button(selectedImage == nil ? "Select Photo" : "Change Photo") {
+                            showImagePicker = true
+                        }
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .font(.custom("Kanit-SemiBold", size: 14))
+                        .background(Color.primaryOrange)
+                        .foregroundColor(.appWhite)
+                        .cornerRadius(8)
+                        .frame(height: 32)
+                    }
+                    HStack {
+                        Button("Cancel") {
+                            resetAddEventForm()
+                            showAddEventModal = false
+                        }
+                        .foregroundColor(.primaryOrange)
+                        Spacer()
+                        Button(isAddingEvent ? "Adding..." : "Add Event") {
+                            addEvent()
+                        }
+                        .disabled(isAddingEvent || selectedCity == nil || selectedCategory == nil || newEventTitle.isEmpty || newEventDateObj == nil)
+                        .padding(.vertical, 8)
+                        .padding(.horizontal, 16)
+                        .background(Color.primaryOrange)
+                        .foregroundColor(.appWhite)
+                        .cornerRadius(8)
+                    }
+                }
+            }
+            .padding()
+            .background(Color.appWhite.ignoresSafeArea())
+            .navigationBarTitle(selectedVenueForEvent == nil ? "Select Venue" : "Add Event", displayMode: .inline)
+        }
+        .sheet(isPresented: $showImagePicker) {
+            ImagePicker(image: $selectedImage)
+        }
+        .onAppear {
+            fetchUserAndRole()
+            fetchCitiesAndCategories()
+        }
+    }
+    func searchVenues() {
+        guard !venueSearchText.isEmpty else {
+            venueSearchResults = []
+            return
+        }
+        isVenueSearchLoading = true
+        Task {
+            do {
+                let response = try await client
+                    .from("Venue")
+                    .select()
+                    .ilike("venuename", pattern: "%\(venueSearchText)%")
+                    .limit(100)
+                    .execute()
+                let decoded = try JSONDecoder().decode([Venue].self, from: response.data)
+                DispatchQueue.main.async {
+                    venueSearchResults = decoded
+                    isVenueSearchLoading = false
+                }
+            } catch {
+                DispatchQueue.main.async {
+                    venueSearchResults = []
+                    isVenueSearchLoading = false
+                }
+            }
+        }
+    }
+    func fetchCitiesAndCategories() {
+        Task {
+            do {
+                let cityResponse = try await client.from("City").select().limit(100).execute()
+                let decodedCities = try JSONDecoder().decode([City].self, from: cityResponse.data)
+                cities = decodedCities
+                let categoryResponse = try await client.from("Category").select().limit(100).execute()
+                let decodedCategories = try JSONDecoder().decode([Category].self, from: categoryResponse.data)
+                categories = decodedCategories
+            } catch {
+                print("Error fetching cities or categories: \(error)")
+            }
+        }
+    }
+    func fetchUserAndRole() {
+        Task {
+            do {
+                let session = try await client.auth.session
+                let user = session.user
+                let userIdString = user.id.uuidString
+                self.userId = userIdString
+            } catch {
+                self.userId = nil
+            }
+        }
+    }
+    func addEvent() {
+        guard let venue = selectedVenueForEvent, let city = selectedCity, let category = selectedCategory else { return }
+        guard let userId = userId else {
+            addEventError = "You must be signed in to add an event."
+            isAddingEvent = false
+            return
+        }
+        isAddingEvent = true
+        addEventError = nil
+        Task {
+            do {
+                var photoPath: String? = nil
+                if let image = selectedImage {
+                    // Upload image to Supabase Storage
+                    if let data = image.jpegData(compressionQuality: 0.8) {
+                        let fileName = "public/event_\(UUID().uuidString).jpg"
+                        let _ = try await client.storage.from("event_images").upload(path: fileName, file: data, options: FileOptions())
+                        photoPath = fileName
+                    }
+                }
+                let formatter = DateFormatter()
+                formatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
+                let eventStartString = formatter.string(from: newEventDateObj)
+                let createdAtString = formatter.string(from: Date())
+                let newEvent = NewEvent(
+                    event_title: newEventTitle,
+                    event_start: eventStartString,
+                    description: newEventDescription,
+                    listingId: venue.id,
+                    cityId: city.id,
+                    categoryId: category.id,
+                    cost: newEventCost,
+                    duration: newEventDuration.isEmpty ? nil : newEventDuration,
+                    website: newEventWebsite.isEmpty ? "" : newEventWebsite,
+                    photo: photoPath,
+                    created_at: createdAtString,
+                    user_id: userId
+                )
+                _ = try await client
+                    .from("Event")
+                    .insert([newEvent])
+                    .execute()
+                DispatchQueue.main.async {
+                    isAddingEvent = false
+                    showAddEventModal = false
+                    resetAddEventForm()
+                }
+            } catch {
+                DispatchQueue.main.async {
+                    addEventError = error.localizedDescription
+                    isAddingEvent = false
+                }
+            }
+        }
+    }
+    func resetAddEventForm() {
+        venueSearchText = ""
+        venueSearchResults = []
+        selectedVenueForEvent = nil
+        newEventTitle = ""
+        newEventDate = ""
+        newEventDescription = ""
+        addEventError = nil
+        isAddingEvent = false
+        selectedCity = nil
+        selectedCategory = nil
+        newEventCost = ""
+        newEventDuration = ""
+        newEventWebsite = ""
+        newEventPhoto = nil
+        selectedImage = nil
+        newEventDateObj = Date()
     }
 }
 
