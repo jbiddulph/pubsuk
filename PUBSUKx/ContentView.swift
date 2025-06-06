@@ -934,89 +934,90 @@ struct EventsListView: View {
                 List {
                     ForEach(events) { event in
                         VStack(spacing: 0) {
-                            HStack(alignment: .center, spacing: 12) {
-                                if let photo = event.photo, !photo.isEmpty, photo != "NULL" {
-                                    AsyncImage(url: URL(string: photo.hasPrefix("http") ? photo : "https://isprmebbahzjnrekkvxv.supabase.co/storage/v1/object/public/event_images/\(photo)")) { phase in
-                                        switch phase {
-                                        case .success(let image):
-                                            image.resizable()
-                                                .aspectRatio(contentMode: .fill)
-                                                .frame(width: 48, height: 48)
-                                                .clipShape(RoundedRectangle(cornerRadius: 8))
-                                        case .failure(_):
-                                            Color.secondaryBlue
-                                                .frame(width: 48, height: 48)
-                                                .clipShape(RoundedRectangle(cornerRadius: 8))
-                                        case .empty:
-                                            Color.secondaryBlue
-                                                .frame(width: 48, height: 48)
-                                                .clipShape(RoundedRectangle(cornerRadius: 8))
-                                                .overlay(
-                                                    ProgressView()
-                                                )
-                                        @unknown default:
-                                            Color.secondaryBlue
-                                                .frame(width: 48, height: 48)
-                                                .clipShape(RoundedRectangle(cornerRadius: 8))
+                            Button(action: { selectedEvent = event }) {
+                                HStack(alignment: .center, spacing: 12) {
+                                    if let photo = event.photo, !photo.isEmpty, photo != "NULL" {
+                                        AsyncImage(url: URL(string: photo.hasPrefix("http") ? photo : "https://isprmebbahzjnrekkvxv.supabase.co/storage/v1/object/public/event_images/\(photo)")) { phase in
+                                            switch phase {
+                                            case .success(let image):
+                                                image.resizable()
+                                                    .aspectRatio(contentMode: .fill)
+                                                    .frame(width: 48, height: 48)
+                                                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                                            case .failure(_):
+                                                Color.secondaryBlue
+                                                    .frame(width: 48, height: 48)
+                                                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                                            case .empty:
+                                                Color.secondaryBlue
+                                                    .frame(width: 48, height: 48)
+                                                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                                                    .overlay(
+                                                        ProgressView()
+                                                    )
+                                            @unknown default:
+                                                Color.secondaryBlue
+                                                    .frame(width: 48, height: 48)
+                                                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                                            }
                                         }
                                     }
-                                }
-                                VStack(alignment: .leading) {
-                                    Button(action: { selectedEvent = event }) {
+                                    VStack(alignment: .leading) {
                                         Text(event.event_title)
                                             .font(.custom("Kanit-SemiBold", size: 24))
                                             .foregroundColor(.primaryOrange)
-                                    }
-                                    if let date = event.event_start {
-                                        Text(date).font(.subheadline)
-                                            .foregroundColor(.appWhite)
-                                    }
-                                    if let venue = event.venue {
-                                        Button(action: {
-                                            // You may want to fetch the full Venue object if needed
-                                            selectedVenueFromEvent = Venue(
-                                                id: venue.id,
-                                                fsa_id: nil,
-                                                venuename: venue.venuename,
-                                                slug: nil,
-                                                venuetype: nil,
-                                                address: "",
-                                                address2: nil,
-                                                town: "",
-                                                county: "",
-                                                postcode: "",
-                                                postalsearch: nil,
-                                                telephone: nil,
-                                                easting: nil,
-                                                northing: nil,
-                                                latitude: nil,
-                                                longitude: nil,
-                                                local_authority: nil,
-                                                website: nil,
-                                                photo: nil,
-                                                is_live: nil,
-                                                created_at: nil,
-                                                updated_at: nil
-                                            )
-                                        }) {
-                                            Text(venue.venuename)
-                                                .font(.caption)
-                                                .foregroundColor(.primaryOrange)
-                                                .underline()
+                                        if let date = event.event_start {
+                                            Text(date).font(.subheadline)
+                                                .foregroundColor(.appWhite)
                                         }
-                                    } else {
-                                        Text("Unknown Venue")
-                                            .font(.caption)
-                                            .foregroundColor(.secondary)
-                                    }
-                                    if let desc = event.description, !desc.isEmpty {
-                                        Text(desc).font(.caption).foregroundColor(.secondary)
+                                        if let venue = event.venue {
+                                            Button(action: {
+                                                // You may want to fetch the full Venue object if needed
+                                                selectedVenueFromEvent = Venue(
+                                                    id: venue.id,
+                                                    fsa_id: nil,
+                                                    venuename: venue.venuename,
+                                                    slug: nil,
+                                                    venuetype: nil,
+                                                    address: "",
+                                                    address2: nil,
+                                                    town: "",
+                                                    county: "",
+                                                    postcode: "",
+                                                    postalsearch: nil,
+                                                    telephone: nil,
+                                                    easting: nil,
+                                                    northing: nil,
+                                                    latitude: nil,
+                                                    longitude: nil,
+                                                    local_authority: nil,
+                                                    website: nil,
+                                                    photo: nil,
+                                                    is_live: nil,
+                                                    created_at: nil,
+                                                    updated_at: nil
+                                                )
+                                            }) {
+                                                Text(venue.venuename)
+                                                    .font(.caption)
+                                                    .foregroundColor(.primaryOrange)
+                                                    .underline()
+                                            }
+                                        } else {
+                                            Text("Unknown Venue")
+                                                .font(.caption)
+                                                .foregroundColor(.secondary)
+                                        }
+                                        if let desc = event.description, !desc.isEmpty {
+                                            Text(desc).font(.caption).foregroundColor(.secondary)
+                                        }
                                     }
                                 }
+                                .padding(.horizontal, 16)
+                                .padding(.vertical, 12)
+                                .frame(maxWidth: .infinity, alignment: .leading)
                             }
-                            .padding(.horizontal, 16)
-                            .padding(.vertical, 12)
-                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .buttonStyle(PlainButtonStyle())
                             Divider()
                                 .background(Color.primaryOrange)
                         }
@@ -1069,6 +1070,14 @@ struct EventsListView: View {
         }
         .font(.custom("Kanit-Regular", size: 20))
         .background(Color.secondaryBlue)
+        // Add the sheet for event details
+        .sheet(item: $selectedEvent) { event in
+            EventDetailView(
+                event: event,
+                userRole: userRole,
+                onClose: { selectedEvent = nil }
+            )
+        }
     }
     func fetchEventsWithVenue() {
         isLoading = true
