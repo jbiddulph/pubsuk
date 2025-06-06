@@ -70,6 +70,8 @@ struct EventWithVenue: Identifiable, Decodable {
     let website: String?
     let photo: String?
     let venue: VenueSummary?
+    let cityId: Int?
+    let categoryId: Int?
 }
 
 struct VenueSummary: Decodable {
@@ -537,16 +539,48 @@ struct VenueDetailView: View {
 // Update EventDetailView to always fetch the full Venue from Supabase
 struct EventDetailView: View {
     let event: EventWithVenue
+    let userRole: String?
     let onClose: (() -> Void)?
+    var onEventUpdated: (() -> Void)? = nil
     @State private var venue: Venue? = nil
+    @State private var showEditModal = false
+    @State private var showDeleteConfirmation = false
+    @State private var isDeleting = false
+    @State private var editFields: EventWithVenue? = nil
     let client = SupabaseClient(
         supabaseURL: URL(string: "https://isprmebbahzjnrekkvxv.supabase.co")!,
         supabaseKey: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImlzcHJtZWJiYWh6am5yZWtrdnh2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3MDgxMTcxOTQsImV4cCI6MjAyMzY5MzE5NH0.KQTIMSGTyNruxx1VQw8cY67ipbh1mABhjJ9tIhxClHE"
     )
+    @State private var eventData: EventWithVenue? = nil
+    // Computed property for displayEvent
+    var displayEvent: EventWithVenue { eventData ?? event }
+    // Computed properties for formatted date and time
+    var eventDate: String {
+        guard let start = displayEvent.event_start else { return "" }
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
+        if let date = formatter.date(from: start) {
+            let dateFormatter = DateFormatter()
+            dateFormatter.dateStyle = .medium
+            return dateFormatter.string(from: date)
+        }
+        return start
+    }
+    var eventTime: String {
+        guard let start = displayEvent.event_start else { return "" }
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
+        if let date = formatter.date(from: start) {
+            let timeFormatter = DateFormatter()
+            timeFormatter.timeStyle = .short
+            return timeFormatter.string(from: date)
+        }
+        return ""
+    }
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             HStack {
-                Text(event.event_title)
+                Text(displayEvent.event_title)
                     .font(.custom("Kanit-Bold", size: 28))
                     .foregroundColor(.primaryOrange)
                 Spacer()
@@ -558,16 +592,25 @@ struct EventDetailView: View {
                     }
                 }
             }
-            if let date = event.event_start {
-                Text(date)
-                    .font(.headline)
-                    .foregroundColor(.appWhite)
+            if !eventDate.isEmpty || !eventTime.isEmpty {
+                HStack(spacing: 8) {
+                    if !eventDate.isEmpty {
+                        Text(eventDate)
+                            .font(.headline)
+                            .foregroundColor(.appWhite)
+                    }
+                    if !eventTime.isEmpty {
+                        Text(eventTime)
+                            .font(.headline)
+                            .foregroundColor(.primaryOrange)
+                    }
+                }
             }
             if let venue = venue {
                 Text("Venue: \(venue.venuename)")
                     .font(.subheadline)
                     .foregroundColor(.primaryOrange)
-            } else if event.listingId != nil {
+            } else if displayEvent.listingId != nil {
                 Text("Venue: Loading...")
                     .font(.subheadline)
                     .foregroundColor(.secondary)
@@ -576,26 +619,26 @@ struct EventDetailView: View {
                     .font(.subheadline)
                     .foregroundColor(.secondary)
             }
-            if let desc = event.description, !desc.isEmpty {
+            if let desc = displayEvent.description, !desc.isEmpty {
                 Text(desc)
                     .font(.body)
                     .foregroundColor(.appWhite)
             }
-            if let cost = event.cost, !cost.isEmpty {
+            if let cost = displayEvent.cost, !cost.isEmpty {
                 Text("Cost: £\(cost)")
                     .font(.body)
                     .foregroundColor(.appWhite)
             }
-            if let duration = event.duration, !duration.isEmpty {
+            if let duration = displayEvent.duration, !duration.isEmpty {
                 Text("Duration: \(duration) mins")
                     .font(.body)
                     .foregroundColor(.appWhite)
             }
-            if let website = event.website, !website.isEmpty {
+            if let website = displayEvent.website, !website.isEmpty {
                 Link("Event Website", destination: URL(string: website.hasPrefix("http") ? website : "https://\(website)")!)
                     .foregroundColor(.primaryOrange)
             }
-            if let photo = event.photo, !photo.isEmpty, photo != "NULL" {
+            if let photo = displayEvent.photo, !photo.isEmpty, photo != "NULL" {
                 AsyncImage(url: URL(string: photo.hasPrefix("http") ? photo : "https://isprmebbahzjnrekkvxv.supabase.co/storage/v1/object/public/event_images/\(photo)")) { image in
                     image.resizable().aspectRatio(contentMode: .fit)
                 } placeholder: {
@@ -603,16 +646,50 @@ struct EventDetailView: View {
                 }
                 .frame(maxHeight: 200)
             }
+            if userRole == "superadmin" || userRole == "venueadmin" {
+                HStack(spacing: 16) {
+                    Button("Edit") {
+                        editFields = displayEvent
+                        showEditModal = true
+                    }
+                    .padding()
+                    .background(Color.primaryOrange)
+                    .foregroundColor(.white)
+                    .cornerRadius(8)
+                    Button("Delete") {
+                        showDeleteConfirmation = true
+                    }
+                    .padding()
+                    .background(Color.red)
+                    .foregroundColor(.white)
+                    .cornerRadius(8)
+                }
+            }
             Spacer()
         }
         .padding()
         .background(Color.secondaryBlue.ignoresSafeArea())
-        .onAppear {
-            fetchVenue()
+        .onAppear { fetchVenue() }
+        .alert(isPresented: $showDeleteConfirmation) {
+            Alert(
+                title: Text("Delete Event"),
+                message: Text("Are you sure you want to delete this event? This will also delete the event image from storage."),
+                primaryButton: .destructive(Text("Delete")) {
+                    deleteEventAndImage()
+                },
+                secondaryButton: .cancel()
+            )
+        }
+        .sheet(isPresented: $showEditModal) {
+            EditEventModal(event: displayEvent, venue: venue, onClose: {
+                showEditModal = false
+                fetchEventDetails()
+                onEventUpdated?()
+            })
         }
     }
     func fetchVenue() {
-        guard let listingId = event.listingId else { return }
+        guard let listingId = displayEvent.listingId else { return }
         Task {
             do {
                 let response = try await client
@@ -627,6 +704,50 @@ struct EventDetailView: View {
                 }
             } catch {
                 print("Error fetching venue: \(error)")
+            }
+        }
+    }
+    func fetchEventDetails() {
+        Task {
+            do {
+                let response = try await client
+                    .from("Event")
+                    .select("*, Venue(id, venuename), cityId, categoryId")
+                    .eq("id", value: event.id)
+                    .single()
+                    .execute()
+                let decoded = try JSONDecoder().decode(EventWithVenue.self, from: response.data)
+                DispatchQueue.main.async {
+                    self.eventData = decoded
+                }
+            } catch {
+                print("Error fetching event details: \(error)")
+            }
+        }
+    }
+    func deleteEventAndImage() {
+        guard !isDeleting else { return }
+        isDeleting = true
+        Task {
+            do {
+                // Delete image from storage if exists
+                if let photo = displayEvent.photo, !photo.isEmpty, photo != "NULL" {
+                    let fileName = photo.hasPrefix("http") ? URL(string: photo)?.lastPathComponent ?? photo : photo
+                    try await client.storage.from("event_images").remove(paths: [fileName])
+                }
+                // Delete event from table
+                _ = try await client
+                    .from("Event")
+                    .delete()
+                    .eq("id", value: displayEvent.id)
+                    .execute()
+                DispatchQueue.main.async {
+                    isDeleting = false
+                    onClose?()
+                }
+            } catch {
+                print("Error deleting event or image: \(error)")
+                isDeleting = false
             }
         }
     }
@@ -953,6 +1074,7 @@ struct EventsListView: View {
                                 Text("Select City")
                                     .font(.custom("Kanit-Bold", size: 18))
                                 Picker("City", selection: $selectedCity) {
+                                    Text("Select a city").tag(nil as City?)
                                     ForEach(cities) { city in
                                         Text(city.name).tag(Optional(city))
                                     }
@@ -964,6 +1086,7 @@ struct EventsListView: View {
                                 Text("Select Category")
                                     .font(.custom("Kanit-Bold", size: 18))
                                 Picker("Category", selection: $selectedCategory) {
+                                    Text("Select a category").tag(nil as Category?)
                                     ForEach(categories) { category in
                                         Text(category.name).tag(Optional(category))
                                     }
@@ -1021,7 +1144,17 @@ struct EventsListView: View {
             }
         }
         .sheet(item: $selectedEvent) { event in
-            EventDetailView(event: event, onClose: { selectedEvent = nil })
+            EventDetailView(
+                event: event,
+                userRole: userRole,
+                onClose: {
+                    selectedEvent = nil
+                    fetchEventsWithVenue()
+                },
+                onEventUpdated: {
+                    fetchEventsWithVenue()
+                }
+            )
         }
     }
     func fetchEventsWithVenue() {
@@ -1035,7 +1168,7 @@ struct EventsListView: View {
                 let to = from + pageSize - 1
                 let response = try await client
                     .from("Event")
-                    .select("*, Venue(id, venuename)")
+                    .select("*, Venue(id, venuename), cityId, categoryId")
                     .order("event_start", ascending: true)
                     .range(from: from, to: to)
                     .execute()
@@ -1476,6 +1609,218 @@ struct AddEventToolbarButton: View {
             .accessibilityLabel("Add Event")
         } else {
             EmptyView()
+        }
+    }
+}
+
+// Replace EditEventModal with a full-featured version:
+struct EditEventModal: View {
+    let event: EventWithVenue
+    let venue: Venue?
+    let onClose: () -> Void
+    @State private var eventTitle: String
+    @State private var eventDescription: String
+    @State private var eventCost: String
+    @State private var eventDuration: String
+    @State private var eventWebsite: String
+    @State private var eventStart: Date
+    @State private var selectedCity: City? = nil
+    @State private var selectedCategory: Category? = nil
+    @State private var selectedImage: UIImage? = nil
+    @State private var photoPath: String?
+    @State private var isSaving = false
+    @State private var cities: [City] = []
+    @State private var categories: [Category] = []
+    @State private var showImagePicker = false
+    let client = SupabaseClient(
+        supabaseURL: URL(string: "https://isprmebbahzjnrekkvxv.supabase.co")!,
+        supabaseKey: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImlzcHJtZWJiYWh6am5yZWtrdnh2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3MDgxMTcxOTQsImV4cCI6MjAyMzY5MzE5NH0.KQTIMSGTyNruxx1VQw8cY67ipbh1mABhjJ9tIhxClHE"
+    )
+    init(event: EventWithVenue, venue: Venue?, onClose: @escaping () -> Void) {
+        self.event = event
+        self.venue = venue
+        self.onClose = onClose
+        _eventTitle = State(initialValue: event.event_title)
+        _eventDescription = State(initialValue: event.description ?? "")
+        _eventCost = State(initialValue: event.cost ?? "")
+        _eventDuration = State(initialValue: event.duration ?? "")
+        _eventWebsite = State(initialValue: event.website ?? "")
+        // Robust event_start parsing
+        if let start = event.event_start {
+            print("[DEBUG] event.event_start raw: \(start)")
+            let isoFormatter = ISO8601DateFormatter()
+            if let date = isoFormatter.date(from: start) {
+                print("[DEBUG] Parsed with ISO8601DateFormatter")
+                _eventStart = State(initialValue: date)
+            } else {
+                let fmts = [
+                    "yyyy-MM-dd'T'HH:mm:ss",
+                    "yyyy-MM-dd HH:mm:ss",
+                    "yyyy-MM-dd'T'HH:mm",
+                    "yyyy-MM-dd HH:mm"
+                ]
+                var found: Date? = nil
+                for fmt in fmts {
+                    let df = DateFormatter()
+                    df.dateFormat = fmt
+                    df.locale = Locale(identifier: "en_US_POSIX")
+                    if let d = df.date(from: start) {
+                        print("[DEBUG] Parsed with format: \(fmt)")
+                        found = d
+                        break
+                    }
+                }
+                if let d = found {
+                    _eventStart = State(initialValue: d)
+                } else {
+                    print("[DEBUG] Could not parse event_start, using current date")
+                    _eventStart = State(initialValue: Date())
+                }
+            }
+        } else {
+            _eventStart = State(initialValue: Date())
+        }
+        _photoPath = State(initialValue: event.photo)
+    }
+    var body: some View {
+        NavigationView {
+            Form {
+                Section(header: Text("Event Details")) {
+                    TextField("Title", text: $eventTitle)
+                    TextField("Description", text: $eventDescription)
+                    TextField("Cost", text: $eventCost)
+                    TextField("Duration", text: $eventDuration)
+                    DatePicker("Event Start", selection: $eventStart, displayedComponents: [.date, .hourAndMinute])
+                    TextField("Website", text: $eventWebsite)
+                }
+                Section(header: Text("City & Category")) {
+                    Picker("City", selection: $selectedCity) {
+                        Text("Select a city").tag(nil as City?)
+                        ForEach(cities) { city in
+                            Text(city.name).tag(Optional(city))
+                        }
+                    }
+                    Picker("Category", selection: $selectedCategory) {
+                        Text("Select a category").tag(nil as Category?)
+                        ForEach(categories) { category in
+                            Text(category.name).tag(Optional(category))
+                        }
+                    }
+                }
+                Section(header: Text("Photo")) {
+                    if let selectedImage = selectedImage {
+                        Image(uiImage: selectedImage)
+                            .resizable()
+                            .scaledToFit()
+                            .frame(height: 120)
+                            .cornerRadius(8)
+                    } else if let photo = photoPath, !photo.isEmpty, photo != "NULL" {
+                        AsyncImage(url: URL(string: photo.hasPrefix("http") ? photo : "https://isprmebbahzjnrekkvxv.supabase.co/storage/v1/object/public/event_images/\(photo)")) { image in
+                            image.resizable().scaledToFit().frame(height: 120).cornerRadius(8)
+                        } placeholder: {
+                            ProgressView().frame(height: 120)
+                        }
+                    }
+                    Button(selectedImage == nil ? "Select Photo" : "Change Photo") {
+                        showImagePicker = true
+                    }
+                }
+                Button(isSaving ? "Saving..." : "Save Changes") {
+                    saveChanges()
+                }
+                .disabled(isSaving || selectedCity == nil || selectedCategory == nil || eventTitle.isEmpty)
+                .foregroundColor(.white)
+                .padding()
+                .background(Color.primaryOrange)
+                .cornerRadius(8)
+            }
+            .navigationBarTitle("Edit Event", displayMode: .inline)
+            .navigationBarItems(trailing: Button("Close") { onClose() })
+            .onAppear(perform: fetchCitiesAndCategories)
+            .sheet(isPresented: $showImagePicker) {
+                ImagePicker(image: $selectedImage)
+            }
+        }
+    }
+    func fetchCitiesAndCategories() {
+        Task {
+            do {
+                let cityResponse = try await client.from("City").select().limit(100).execute()
+                let decodedCities = try JSONDecoder().decode([City].self, from: cityResponse.data)
+                cities = decodedCities
+                if let cityId = event.cityId, let found = decodedCities.first(where: { $0.id == cityId }) {
+                    selectedCity = found
+                }
+                let categoryResponse = try await client.from("Category").select().limit(100).execute()
+                let decodedCategories = try JSONDecoder().decode([Category].self, from: categoryResponse.data)
+                categories = decodedCategories
+                if let catId = event.categoryId, let found = decodedCategories.first(where: { $0.id == catId }) {
+                    selectedCategory = found
+                }
+            } catch {
+                print("Error fetching cities or categories: \(error)")
+            }
+        }
+    }
+    func saveChanges() {
+        isSaving = true
+        Task {
+            do {
+                var newPhotoPath = photoPath // Always start with the current photo path
+                // If a new image is selected, upload it and update newPhotoPath
+                if let image = selectedImage {
+                    if let data = image.jpegData(compressionQuality: 0.8) {
+                        // Delete old image if exists
+                        if let oldPhoto = photoPath, !oldPhoto.isEmpty, oldPhoto != "NULL" {
+                            let fileName = oldPhoto.hasPrefix("http") ? URL(string: oldPhoto)?.lastPathComponent ?? oldPhoto : oldPhoto
+                            try await client.storage.from("event_images").remove(paths: [fileName])
+                        }
+                        let fileName = "public/event_\(UUID().uuidString).jpg"
+                        let _ = try await client.storage.from("event_images").upload(path: fileName, file: data, options: FileOptions())
+                        newPhotoPath = fileName
+                    }
+                }
+                print("[DEBUG] Final photo path for update: \(String(describing: newPhotoPath))")
+                let formatter = DateFormatter()
+                formatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
+                let eventStartString = formatter.string(from: eventStart)
+                struct EventUpdate: Encodable {
+                    let event_title: String
+                    let event_start: String
+                    let description: String
+                    let cost: String
+                    let duration: String?
+                    let website: String?
+                    let photo: String?
+                    let cityId: Int
+                    let categoryId: Int
+                }
+                let updatePayload = EventUpdate(
+                    event_title: eventTitle,
+                    event_start: eventStartString,
+                    description: eventDescription,
+                    cost: eventCost,
+                    duration: eventDuration.isEmpty ? nil : eventDuration,
+                    website: eventWebsite.isEmpty ? nil : eventWebsite,
+                    photo: newPhotoPath, // always set to current or new
+                    cityId: selectedCity?.id ?? 0,
+                    categoryId: selectedCategory?.id ?? 0
+                )
+                print("[DEBUG] Update payload: \(updatePayload)")
+                let response = try await client
+                    .from("Event")
+                    .update(updatePayload)
+                    .eq("id", value: event.id)
+                    .execute()
+                print("[DEBUG] Supabase update response: \(response)")
+                DispatchQueue.main.async {
+                    isSaving = false
+                    onClose()
+                }
+            } catch {
+                print("[DEBUG] Error updating event: \(error)")
+                isSaving = false
+            }
         }
     }
 }
