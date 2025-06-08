@@ -112,7 +112,7 @@ extension Color {
 }
 
 struct ContentView: View {
-    @State private var selectedTab = 0
+    @State private var selectedTab = 3 // Start on Dashboard tab
     @State private var selectedVenueFromEvent: Venue? = nil
     @State private var isDashboardPresented = false
     @State private var userRole: String? = nil
@@ -121,12 +121,22 @@ struct ContentView: View {
     var body: some View {
         TabView(selection: $selectedTab) {
             NavigationView {
-                VenuesListView(
-                    showAddEventModal: $showAddEventModal,
-                    selectedVenueForEvent: $selectedVenueForEvent
-                )
+                if userRole == nil && selectedTab != 3 {
+                    VStack {
+                        Spacer()
+                        ProgressView("Loading user profile...")
+                        Spacer()
+                    }
+                    .background(Color.secondaryBlue)
+                } else {
+                    VenuesListView(
+                        showAddEventModal: $showAddEventModal,
+                        selectedVenueForEvent: $selectedVenueForEvent,
+                        userRole: userRole
+                    )
                     .navigationTitle("Venues")
                     .background(Color.darkBlue)
+                }
             }
             .tabItem {
                 Label {
@@ -139,13 +149,23 @@ struct ContentView: View {
             }
             .tag(0)
             NavigationView {
-                VenueMapView(
-                    selectedTab: $selectedTab,
-                    showAddEventModal: $showAddEventModal,
-                    selectedVenueForEvent: $selectedVenueForEvent
-                )
+                if userRole == nil && selectedTab != 3 {
+                    VStack {
+                        Spacer()
+                        ProgressView("Loading user profile...")
+                        Spacer()
+                    }
+                    .background(Color.secondaryBlue)
+                } else {
+                    VenueMapView(
+                        selectedTab: $selectedTab,
+                        showAddEventModal: $showAddEventModal,
+                        selectedVenueForEvent: $selectedVenueForEvent,
+                        userRole: userRole
+                    )
                     .navigationTitle("Map")
                     .background(Color.darkBlue)
+                }
             }
             .tabItem {
                 Label {
@@ -158,8 +178,17 @@ struct ContentView: View {
             }
             .tag(1)
             NavigationView {
-                EventsListView(selectedVenueFromEvent: $selectedVenueFromEvent)
-                    .background(Color.darkBlue)
+                if userRole == nil && selectedTab != 3 {
+                    VStack {
+                        Spacer()
+                        ProgressView("Loading user profile...")
+                        Spacer()
+                    }
+                    .background(Color.secondaryBlue)
+                } else {
+                    EventsListView(selectedVenueFromEvent: $selectedVenueFromEvent)
+                        .background(Color.darkBlue)
+                }
             }
             .tabItem {
                 Label {
@@ -195,7 +224,8 @@ struct ContentView: View {
                 venue: venue,
                 onClose: { selectedVenueFromEvent = nil },
                 showAddEventModal: $showAddEventModal,
-                selectedVenueForEvent: $selectedVenueForEvent
+                selectedVenueForEvent: $selectedVenueForEvent,
+                userRole: userRole
             )
         }
         .sheet(isPresented: $showAddEventModal) {
@@ -211,6 +241,7 @@ struct ContentView: View {
 struct VenuesListView: View {
     @Binding var showAddEventModal: Bool
     @Binding var selectedVenueForEvent: Venue?
+    var userRole: String?
     @State private var venues: [Venue] = []
     @State private var page: Int = 0
     @State private var isLoading = false
@@ -320,7 +351,7 @@ struct VenuesListView: View {
                 Form {
                     Picker("County", selection: $selectedCounty) {
                         Text("Any").tag(nil as String?)
-                        ForEach(counties, id: \ .self) { county in
+                        ForEach(counties, id: \.self) { county in
                             Text(county).tag(Optional(county))
                         }
                     }
@@ -335,7 +366,7 @@ struct VenuesListView: View {
                     if !towns.isEmpty {
                         Picker("Town", selection: $selectedTown) {
                             Text("Any").tag(nil as String?)
-                            ForEach(towns, id: \ .self) { town in
+                            ForEach(towns, id: \.self) { town in
                                 Text(town).tag(Optional(town))
                             }
                         }
@@ -360,7 +391,11 @@ struct VenuesListView: View {
                 venue: venue,
                 onClose: { selectedVenue = nil },
                 showAddEventModal: $showAddEventModal,
-                selectedVenueForEvent: $selectedVenueForEvent
+                selectedVenueForEvent: $selectedVenueForEvent,
+                userRole: userRole,
+                onVenueUpdated: {
+                    fetchVenues()
+                }
             )
         }
         .font(.custom("Kanit-Regular", size: 20))
@@ -447,13 +482,13 @@ struct VenueMapView: View {
     @Binding var selectedTab: Int
     @Binding var showAddEventModal: Bool
     @Binding var selectedVenueForEvent: Venue?
-    
-    init(selectedTab: Binding<Int>, showAddEventModal: Binding<Bool>, selectedVenueForEvent: Binding<Venue?>) {
+    var userRole: String?
+    init(selectedTab: Binding<Int>, showAddEventModal: Binding<Bool>, selectedVenueForEvent: Binding<Venue?>, userRole: String?) {
         self._selectedTab = selectedTab
         self._showAddEventModal = showAddEventModal
         self._selectedVenueForEvent = selectedVenueForEvent
+        self.userRole = userRole
     }
-    
     var body: some View {
         ZStack {
             Color.darkBlue.ignoresSafeArea()
@@ -494,7 +529,8 @@ struct VenueMapView: View {
                     venue: venue,
                     onClose: { viewModel.selectedVenue = nil },
                     showAddEventModal: $showAddEventModal,
-                    selectedVenueForEvent: $selectedVenueForEvent
+                    selectedVenueForEvent: $selectedVenueForEvent,
+                    userRole: userRole
                 )
                     .background(Color(.systemBackground).opacity(0.95))
                     .cornerRadius(16)
@@ -548,144 +584,201 @@ struct VenueDetailView: View {
     var onClose: (() -> Void)? = nil
     @Binding var showAddEventModal: Bool
     @Binding var selectedVenueForEvent: Venue?
+    var userRole: String?
+    var onVenueUpdated: (() -> Void)? = nil
+    @State private var showEditModal = false
+    @State private var showDeleteConfirmation = false
+    @State private var isDeleting = false
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                HStack {
-                    Text(venue.venuename)
-                        .font(.custom("Kanit-Bold", size: 30))
-                        .foregroundColor(.primaryOrange)
-                    Spacer()
-                    if let onClose = onClose {
-                        Button(action: { onClose() }) {
-                            Image(systemName: "xmark.circle.fill")
-                                .font(.title)
-                                .foregroundColor(.appWhite)
-                        }
-                    }
-                }
-                Button(action: {
-                    selectedVenueForEvent = venue
-                    showAddEventModal = true
-                }) {
-                    HStack {
-                        Image(systemName: "plus.circle.fill")
-                            .foregroundColor(.primaryOrange)
-                        Text("Add Event")
-                            .font(.custom("Kanit-SemiBold", size: 20))
-                            .foregroundColor(.primaryOrange)
-                    }
-                    .padding(8)
-                    .background(Color.secondaryBlue)
-                    .cornerRadius(10)
-                }
-                .padding(.bottom, 8)
-                if let slug = venue.slug, !slug.isEmpty {
-                    Text("Slug: \(slug)")
-                        .foregroundColor(.appWhite)
-                        .font(.custom("Kanit-Regular", size: 16))
-                }
-                if let fsa = venue.fsa_id {
-                    Text("FSA ID: \(fsa)")
-                        .foregroundColor(.appWhite)
-                        .font(.custom("Kanit-Regular", size: 16))
-                }
-                if let isLive = venue.is_live, !isLive.isEmpty {
-                    Text("Live: \(isLive)")
-                        .foregroundColor(.appWhite)
-                        .font(.custom("Kanit-Regular", size: 16))
-                }
-                Text(venue.address)
-                    .foregroundColor(.appWhite)
-                    .font(.custom("Kanit-Regular", size: 16))
-                if let address2 = venue.address2, !address2.isEmpty {
-                    Text(address2).foregroundColor(.appWhite).font(.custom("Kanit-Regular", size: 16))
-                }
-                Text("\(venue.town), \(venue.county), \(venue.postcode)")
-                    .foregroundColor(.appWhite)
-                    .font(.custom("Kanit-Regular", size: 16))
-                if let postalsearch = venue.postalsearch, !postalsearch.isEmpty {
-                    Text("Postal Search: \(postalsearch)").foregroundColor(.appWhite).font(.custom("Kanit-Regular", size: 16))
-                }
-                if let telephone = venue.telephone, !telephone.isEmpty {
-                    Text("Tel: \(telephone)").foregroundColor(.appWhite).font(.custom("Kanit-Regular", size: 16))
-                }
-                if let website = venue.website, !website.isEmpty, website != "NULL" {
-                    Link(website, destination: URL(string: website.hasPrefix("http") ? website : "https://\(website)")!)
-                        .foregroundColor(.primaryOrange)
-                        .font(.custom("Kanit-Regular", size: 16))
-                }
-                if let photo = venue.photo, !photo.isEmpty, photo != "NULL" {
-                    AsyncImage(url: URL(string: photo.hasPrefix("http") ? photo : "https://isprmebbahzjnrekkvxv.supabase.co/storage/v1/object/public/\(photo)")) { image in
-                        image.resizable().aspectRatio(contentMode: .fit)
-                    } placeholder: {
-                        ProgressView()
-                    }
-                    .frame(maxHeight: 200)
-                }
-                if let latStr = venue.latitude, let lonStr = venue.longitude,
-                   let lat = Double(latStr), let lon = Double(lonStr) {
-                    Map(position: .constant(.region(MKCoordinateRegion(
-                        center: CLLocationCoordinate2D(latitude: lat, longitude: lon),
-                        span: MKCoordinateSpan(latitudeDelta: 0.01, longitudeDelta: 0.01)
-                    )))) {
-                        Annotation("Venue", coordinate: CLLocationCoordinate2D(latitude: lat, longitude: lon)) {
-                            Image(systemName: "mappin.circle.fill")
-                                .foregroundColor(.primaryOrange)
-                                .font(.title)
-                        }
-                    }
-                    .frame(height: 250)
-                } else {
-                    Text("No map location available.").foregroundColor(.secondary).font(.custom("Kanit-Regular", size: 16))
-                }
-                Divider()
-                if let venuetype = venue.venuetype, !venuetype.isEmpty {
-                    Text("Type: \(venuetype)")
-                        .foregroundColor(.appWhite)
-                        .font(.custom("Kanit-Regular", size: 16))
-                }
-                if let localAuth = venue.local_authority, !localAuth.isEmpty {
-                    Text("Local Authority: \(localAuth)")
-                        .foregroundColor(.appWhite)
-                        .font(.custom("Kanit-Regular", size: 16))
-                }
-                if let easting = venue.easting, !easting.isEmpty {
-                    Text("Easting: \(easting)")
-                        .foregroundColor(.appWhite)
-                        .font(.custom("Kanit-Regular", size: 16))
-                }
-                if let northing = venue.northing, !northing.isEmpty {
-                    Text("Northing: \(northing)")
-                        .foregroundColor(.appWhite)
-                        .font(.custom("Kanit-Regular", size: 16))
-                }
-                if let lat = venue.latitude, !lat.isEmpty {
-                    Text("Latitude: \(lat)")
-                        .foregroundColor(.appWhite)
-                        .font(.custom("Kanit-Regular", size: 16))
-                }
-                if let lon = venue.longitude, !lon.isEmpty {
-                    Text("Longitude: \(lon)")
-                        .foregroundColor(.appWhite)
-                        .font(.custom("Kanit-Regular", size: 16))
-                }
-                if let created = venue.created_at, !created.isEmpty {
-                    Text("Created: \(created)")
-                        .foregroundColor(.appWhite)
-                        .font(.custom("Kanit-Regular", size: 16))
-                }
-                if let updated = venue.updated_at, !updated.isEmpty {
-                    Text("Updated: \(updated)")
-                        .foregroundColor(.appWhite)
-                        .font(.custom("Kanit-Regular", size: 16))
-                }
+        if userRole == nil {
+            VStack {
+                ProgressView("Loading permissions...")
+                Text("userRole: nil (waiting for permissions)")
             }
-            .padding()
-            .font(.custom("Kanit-Regular", size: 20))
+        } else {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    Text("userRole: \(userRole ?? "nil")") // DEBUG
+                    HStack {
+                        Text(venue.venuename)
+                            .font(.custom("Kanit-Bold", size: 30))
+                            .foregroundColor(.primaryOrange)
+                        Spacer()
+                        if let onClose = onClose {
+                            Button(action: { onClose() }) {
+                                Image(systemName: "xmark.circle.fill")
+                                    .font(.title)
+                                    .foregroundColor(.appWhite)
+                            }
+                        }
+                    }
+                    if userRole == "superadmin" || userRole == "venueadmin" {
+                        HStack(spacing: 16) {
+                            Button("Edit") {
+                                showEditModal = true
+                            }
+                            .padding()
+                            .background(Color.primaryOrange)
+                            .foregroundColor(.white)
+                            .cornerRadius(8)
+                            Button("Delete") {
+                                showDeleteConfirmation = true
+                            }
+                            .padding()
+                            .background(Color.red)
+                            .foregroundColor(.white)
+                            .cornerRadius(8)
+                        }
+                    }
+                    Button(action: {
+                        selectedVenueForEvent = venue
+                        showAddEventModal = true
+                    }) {
+                        HStack {
+                            Image(systemName: "plus.circle.fill")
+                                .foregroundColor(.primaryOrange)
+                            Text("Add Event")
+                                .font(.custom("Kanit-SemiBold", size: 20))
+                                .foregroundColor(.primaryOrange)
+                        }
+                        .padding(8)
+                        .background(Color.secondaryBlue)
+                        .cornerRadius(10)
+                    }
+                    .padding(.bottom, 8)
+                    if let slug = venue.slug, !slug.isEmpty {
+                        Text("Slug: \(slug)")
+                            .foregroundColor(.appWhite)
+                            .font(.custom("Kanit-Regular", size: 16))
+                    }
+                    if let fsa = venue.fsa_id {
+                        Text("FSA ID: \(fsa)")
+                            .foregroundColor(.appWhite)
+                            .font(.custom("Kanit-Regular", size: 16))
+                    }
+                    if let isLive = venue.is_live, !isLive.isEmpty {
+                        Text("Live: \(isLive)")
+                            .foregroundColor(.appWhite)
+                            .font(.custom("Kanit-Regular", size: 16))
+                    }
+                    Text(venue.address)
+                        .foregroundColor(.appWhite)
+                        .font(.custom("Kanit-Regular", size: 16))
+                    if let address2 = venue.address2, !address2.isEmpty {
+                        Text(address2).foregroundColor(.appWhite).font(.custom("Kanit-Regular", size: 16))
+                    }
+                    Text("\(venue.town), \(venue.county), \(venue.postcode)")
+                        .foregroundColor(.appWhite)
+                        .font(.custom("Kanit-Regular", size: 16))
+                    if let postalsearch = venue.postalsearch, !postalsearch.isEmpty {
+                        Text("Postal Search: \(postalsearch)").foregroundColor(.appWhite).font(.custom("Kanit-Regular", size: 16))
+                    }
+                    if let telephone = venue.telephone, !telephone.isEmpty {
+                        Text("Tel: \(telephone)").foregroundColor(.appWhite).font(.custom("Kanit-Regular", size: 16))
+                    }
+                    if let website = venue.website, !website.isEmpty, website != "NULL" {
+                        Link(website, destination: URL(string: website.hasPrefix("http") ? website : "https://\(website)")!)
+                            .foregroundColor(.primaryOrange)
+                            .font(.custom("Kanit-Regular", size: 16))
+                    }
+                    if let photo = venue.photo, !photo.isEmpty, photo != "NULL" {
+                        AsyncImage(
+                            url: URL(string: photo.hasPrefix("http")
+                                ? photo
+                                : "https://isprmebbahzjnrekkvxv.supabase.co/storage/v1/object/public/venue_images/\(photo)")
+                        ) { image in
+                            image.resizable().aspectRatio(contentMode: .fit)
+                        } placeholder: {
+                            ProgressView()
+                        }
+                        .frame(maxHeight: 200)
+                    }
+                    if let latStr = venue.latitude, let lonStr = venue.longitude,
+                       let lat = Double(latStr), let lon = Double(lonStr) {
+                        Map(position: .constant(.region(MKCoordinateRegion(
+                            center: CLLocationCoordinate2D(latitude: lat, longitude: lon),
+                            span: MKCoordinateSpan(latitudeDelta: 0.01, longitudeDelta: 0.01)
+                        )))) {
+                            Annotation("Venue", coordinate: CLLocationCoordinate2D(latitude: lat, longitude: lon)) {
+                                Image(systemName: "mappin.circle.fill")
+                                    .foregroundColor(.primaryOrange)
+                                    .font(.title)
+                            }
+                        }
+                        .frame(height: 250)
+                    } else {
+                        Text("No map location available.").foregroundColor(.secondary).font(.custom("Kanit-Regular", size: 16))
+                    }
+                    Divider()
+                    if let venuetype = venue.venuetype, !venuetype.isEmpty {
+                        Text("Type: \(venuetype)")
+                            .foregroundColor(.appWhite)
+                            .font(.custom("Kanit-Regular", size: 16))
+                    }
+                    if let localAuth = venue.local_authority, !localAuth.isEmpty {
+                        Text("Local Authority: \(localAuth)")
+                            .foregroundColor(.appWhite)
+                            .font(.custom("Kanit-Regular", size: 16))
+                    }
+                    if let easting = venue.easting, !easting.isEmpty {
+                        Text("Easting: \(easting)")
+                            .foregroundColor(.appWhite)
+                            .font(.custom("Kanit-Regular", size: 16))
+                    }
+                    if let northing = venue.northing, !northing.isEmpty {
+                        Text("Northing: \(northing)")
+                            .foregroundColor(.appWhite)
+                            .font(.custom("Kanit-Regular", size: 16))
+                    }
+                    if let lat = venue.latitude, !lat.isEmpty {
+                        Text("Latitude: \(lat)")
+                            .foregroundColor(.appWhite)
+                            .font(.custom("Kanit-Regular", size: 16))
+                    }
+                    if let lon = venue.longitude, !lon.isEmpty {
+                        Text("Longitude: \(lon)")
+                            .foregroundColor(.appWhite)
+                            .font(.custom("Kanit-Regular", size: 16))
+                    }
+                    if let created = venue.created_at, !created.isEmpty {
+                        Text("Created: \(created)")
+                            .foregroundColor(.appWhite)
+                            .font(.custom("Kanit-Regular", size: 16))
+                    }
+                    if let updated = venue.updated_at, !updated.isEmpty {
+                        Text("Updated: \(updated)")
+                            .foregroundColor(.appWhite)
+                            .font(.custom("Kanit-Regular", size: 16))
+                    }
+                }
+                .padding()
+                .font(.custom("Kanit-Regular", size: 20))
+                .background(Color.secondaryBlue)
+            }
             .background(Color.secondaryBlue)
+            .sheet(isPresented: $showEditModal) {
+                VenueEditModal(venue: venue, onClose: { showEditModal = false }, onVenueUpdated: {
+                    showEditModal = false
+                    onVenueUpdated?()
+                })
+            }
+            .alert(isPresented: $showDeleteConfirmation) {
+                Alert(
+                    title: Text("Delete Venue"),
+                    message: Text("Are you sure you want to delete this venue? This action cannot be undone."),
+                    primaryButton: .destructive(Text("Delete")) {
+                        deleteVenue()
+                    },
+                    secondaryButton: .cancel()
+                )
+            }
         }
-        .background(Color.secondaryBlue)
+    }
+    func deleteVenue() {
+        // Implement delete venue logic
+        print("Deleting venue...")
+        isDeleting = true
+        // Add your delete logic here
     }
 }
 
@@ -1329,6 +1422,7 @@ struct DashboardView: View {
     @State private var error: String? = nil
     @State private var user: User? = nil
     @Binding var userRole: String?
+    @State private var debugLog: String = ""
     let client = SupabaseClient(
         supabaseURL: URL(string: "https://isprmebbahzjnrekkvxv.supabase.co")!,
         supabaseKey: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImlzcHJtZWJiYWh6am5yZWtrdnh2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3MDgxMTcxOTQsImV4cCI6MjAyMzY5MzE5NH0.KQTIMSGTyNruxx1VQw8cY67ipbh1mABhjJ9tIhxClHE"
@@ -1399,18 +1493,35 @@ struct DashboardView: View {
                 }
                 .padding()
             }
+            Spacer()
+            ScrollView {
+                Text(debugLog)
+                    .font(.system(size: 12, design: .monospaced))
+                    .foregroundColor(.yellow)
+                    .padding()
+                    .background(Color.black.opacity(0.7))
+                    .cornerRadius(8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .frame(height: 200)
         }
-        .onAppear(perform: loadUser)
+        .onAppear {
+            debugLog.append("DashboardView appeared\n")
+            loadUser()
+        }
         .background(Color.darkBlue.ignoresSafeArea())
         .font(.custom("Kanit-Regular", size: 20))
     }
     func loadUser() {
         Task {
             do {
+                debugLog.append("Trying to load user session\n")
                 let session = try await client.auth.session
+                debugLog.append("Loaded session: \(session)\n")
                 self.user = session.user
                 fetchUserRole(userId: session.user.id.uuidString)
             } catch {
+                debugLog.append("Failed to load user: \(error)\n")
                 self.user = nil
                 self.userRole = nil
             }
@@ -1422,6 +1533,7 @@ struct DashboardView: View {
         Task {
             do {
                 let session = try await client.auth.signIn(email: email, password: password)
+                debugLog.append("Signed in, session: \(session)\n")
                 DispatchQueue.main.async {
                     self.user = session.user
                     fetchUserRole(userId: session.user.id.uuidString)
@@ -1441,6 +1553,7 @@ struct DashboardView: View {
         Task {
             do {
                 let session = try await client.auth.signUp(email: email, password: password)
+                debugLog.append("Signed up, session: \(session)\n")
                 let user = session.user
                 // Insert into users table
                 let userName = name.isEmpty ? (user.email ?? "") : name
@@ -1466,6 +1579,7 @@ struct DashboardView: View {
         Task {
             do {
                 try await client.auth.signOut()
+                debugLog.append("Logged out\n")
                 DispatchQueue.main.async {
                     self.user = nil
                     self.userRole = nil
@@ -1480,19 +1594,25 @@ struct DashboardView: View {
     func fetchUserRole(userId: String) {
         Task {
             do {
+                debugLog.append("Fetching user role for id: \(userId)\n")
                 let response = try await client
                     .from("users")
                     .select("role")
                     .eq("id", value: userId)
                     .single()
                     .execute()
+                debugLog.append("User role response: \(String(data: response.data, encoding: .utf8) ?? "nil")\n")
                 if let data = try? JSONSerialization.jsonObject(with: response.data, options: []) as? [String: Any],
                    let role = data["role"] as? String {
+                    debugLog.append("Fetched user role: \(role)\n")
                     DispatchQueue.main.async {
                         self.userRole = role
                     }
+                } else {
+                    debugLog.append("Role not found in response\n")
                 }
             } catch {
+                debugLog.append("Failed to fetch user role: \(error)\n")
                 DispatchQueue.main.async {
                     self.userRole = nil
                 }
@@ -2048,4 +2168,216 @@ struct AddEventModal: View {
 
 #Preview {
     ContentView()
+}
+
+// VenueEditModal for editing venue details
+struct VenueEditModal: View {
+    let venue: Venue
+    let onClose: () -> Void
+    let onVenueUpdated: (() -> Void)?
+    @State private var fsa_id: String
+    @State private var venuename: String
+    @State private var slug: String
+    @State private var venuetype: String
+    @State private var address: String
+    @State private var address2: String
+    @State private var town: String
+    @State private var county: String
+    @State private var postcode: String
+    @State private var postalsearch: String
+    @State private var telephone: String
+    @State private var easting: String
+    @State private var northing: String
+    @State private var latitude: String
+    @State private var longitude: String
+    @State private var local_authority: String
+    @State private var website: String
+    @State private var photo: String
+    @State private var is_live: String
+    @State private var updated_at: String
+    @State private var selectedImage: UIImage? = nil
+    @State private var showImagePicker = false
+    @State private var isSaving = false
+    @State private var saveError: String? = nil
+    let client = SupabaseClient(
+        supabaseURL: URL(string: "https://isprmebbahzjnrekkvxv.supabase.co")!,
+        supabaseKey: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImlzcHJtZWJiYWh6am5yZWtrdnh2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3MDgxMTcxOTQsImV4cCI6MjAyMzY5MzE5NH0.KQTIMSGTyNruxx1VQw8cY67ipbh1mABhjJ9tIhxClHE"
+    )
+    init(venue: Venue, onClose: @escaping () -> Void, onVenueUpdated: (() -> Void)? = nil) {
+        self.venue = venue
+        self.onClose = onClose
+        self.onVenueUpdated = onVenueUpdated
+        _fsa_id = State(initialValue: venue.fsa_id.map { String($0) } ?? "")
+        _venuename = State(initialValue: venue.venuename)
+        _slug = State(initialValue: venue.slug ?? "")
+        _venuetype = State(initialValue: venue.venuetype ?? "")
+        _address = State(initialValue: venue.address)
+        _address2 = State(initialValue: venue.address2 ?? "")
+        _town = State(initialValue: venue.town)
+        _county = State(initialValue: venue.county)
+        _postcode = State(initialValue: venue.postcode)
+        _postalsearch = State(initialValue: venue.postalsearch ?? "")
+        _telephone = State(initialValue: venue.telephone ?? "")
+        _easting = State(initialValue: venue.easting ?? "")
+        _northing = State(initialValue: venue.northing ?? "")
+        _latitude = State(initialValue: venue.latitude ?? "")
+        _longitude = State(initialValue: venue.longitude ?? "")
+        _local_authority = State(initialValue: venue.local_authority ?? "")
+        _website = State(initialValue: venue.website ?? "")
+        _photo = State(initialValue: venue.photo ?? "")
+        _is_live = State(initialValue: venue.is_live ?? "")
+        _updated_at = State(initialValue: venue.updated_at ?? "")
+    }
+    var photoURL: URL? {
+        if photo.isEmpty { return nil }
+        if photo.hasPrefix("http") {
+            return URL(string: photo)
+        } else {
+            return URL(string: "https://isprmebbahzjnrekkvxv.supabase.co/storage/v1/object/public/venue_images/\(photo)")
+        }
+    }
+    var body: some View {
+        NavigationView {
+            Form {
+                if let saveError = saveError {
+                    Text("Error: \(saveError)")
+                        .foregroundColor(.red)
+                        .font(.caption)
+                        .padding(.bottom, 4)
+                }
+                Section(header: Text("Venue Details")) {
+                    TextField("FSA ID", text: $fsa_id)
+                        .keyboardType(.numberPad)
+                    TextField("Venue Name", text: $venuename)
+                    TextField("Slug", text: $slug)
+                    TextField("Type", text: $venuetype)
+                    TextField("Address", text: $address)
+                    TextField("Address 2", text: $address2)
+                    TextField("Town", text: $town)
+                    TextField("County", text: $county)
+                    TextField("Postcode", text: $postcode)
+                    TextField("Postal Search", text: $postalsearch)
+                    TextField("Telephone", text: $telephone)
+                    TextField("Easting", text: $easting)
+                    TextField("Northing", text: $northing)
+                    TextField("Latitude", text: $latitude)
+                    TextField("Longitude", text: $longitude)
+                    TextField("Local Authority", text: $local_authority)
+                    TextField("Website", text: $website)
+                    TextField("Is Live", text: $is_live)
+                }
+                Section(header: Text("Photo")) {
+                    if let selectedImage = selectedImage {
+                        Image(uiImage: selectedImage)
+                            .resizable()
+                            .scaledToFit()
+                            .frame(height: 120)
+                            .cornerRadius(8)
+                    } else if let url = photoURL {
+                        AsyncImage(url: url) { image in
+                            image.resizable().scaledToFit().frame(height: 120).cornerRadius(8)
+                        } placeholder: {
+                            ProgressView().frame(height: 120)
+                        }
+                    }
+                    Button(selectedImage == nil ? "Select Photo" : "Change Photo") {
+                        showImagePicker = true
+                    }
+                }
+                Button(isSaving ? "Saving..." : "Save Changes") {
+                    saveChanges()
+                }
+                .disabled(isSaving || venuename.isEmpty || address.isEmpty || town.isEmpty || county.isEmpty || postcode.isEmpty)
+                .foregroundColor(.white)
+                .padding()
+                .background(Color.primaryOrange)
+                .cornerRadius(8)
+                if isSaving {
+                    HStack {
+                        Spacer()
+                        ProgressView()
+                        Spacer()
+                    }
+                }
+            }
+            .navigationBarTitle("Edit Venue", displayMode: .inline)
+            .navigationBarItems(trailing: Button("Close") { onClose() })
+        }
+        .sheet(isPresented: $showImagePicker) {
+            ImagePicker(image: $selectedImage)
+        }
+    }
+    func saveChanges() {
+        isSaving = true
+        saveError = nil
+        Task {
+            do {
+                var photoPath = photo
+                if let image = selectedImage, let data = image.jpegData(compressionQuality: 0.8) {
+                    let fileName = "public/venue_\(UUID().uuidString).jpg"
+                    let _ = try await client.storage.from("venue_images").upload(path: fileName, file: data, options: FileOptions())
+                    photoPath = fileName
+                }
+                struct VenueUpdate: Encodable {
+                    let fsa_id: Int?
+                    let venuename: String
+                    let slug: String?
+                    let venuetype: String?
+                    let address: String
+                    let address2: String?
+                    let town: String
+                    let county: String
+                    let postcode: String
+                    let postalsearch: String?
+                    let telephone: String?
+                    let easting: String?
+                    let northing: String?
+                    let latitude: String?
+                    let longitude: String?
+                    let local_authority: String?
+                    let website: String?
+                    let photo: String?
+                    let is_live: String?
+                    let updated_at: String
+                }
+                let updatePayload = VenueUpdate(
+                    fsa_id: fsa_id.isEmpty ? nil : Int(fsa_id),
+                    venuename: venuename,
+                    slug: slug.isEmpty ? nil : slug,
+                    venuetype: venuetype.isEmpty ? nil : venuetype,
+                    address: address,
+                    address2: address2.isEmpty ? nil : address2,
+                    town: town,
+                    county: county,
+                    postcode: postcode,
+                    postalsearch: postalsearch.isEmpty ? nil : postalsearch,
+                    telephone: telephone.isEmpty ? nil : telephone,
+                    easting: easting.isEmpty ? nil : easting,
+                    northing: northing.isEmpty ? nil : northing,
+                    latitude: latitude.isEmpty ? nil : latitude,
+                    longitude: longitude.isEmpty ? nil : longitude,
+                    local_authority: local_authority.isEmpty ? nil : local_authority,
+                    website: website.isEmpty ? nil : website,
+                    photo: photoPath.isEmpty ? nil : photoPath,
+                    is_live: is_live.isEmpty ? nil : is_live,
+                    updated_at: ISO8601DateFormatter().string(from: Date())
+                )
+                let _ = try await client
+                    .from("Venue")
+                    .update(updatePayload)
+                    .eq("id", value: venue.id)
+                    .execute()
+                DispatchQueue.main.async {
+                    isSaving = false
+                    onVenueUpdated?()
+                    onClose()
+                }
+            } catch {
+                DispatchQueue.main.async {
+                    saveError = error.localizedDescription
+                    isSaving = false
+                }
+            }
+        }
+    }
 }
