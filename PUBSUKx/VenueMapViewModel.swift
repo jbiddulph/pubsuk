@@ -31,6 +31,7 @@ class VenueMapViewModel: NSObject, ObservableObject {
         supabaseURL: URL(string: "https://isprmebbahzjnrekkvxv.supabase.co")!,
         supabaseKey: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImlzcHJtZWJiYWh6am5yZWtrdnh2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3MDgxMTcxOTQsImV4cCI6MjAyMzY5MzE5NH0.KQTIMSGTyNruxx1VQw8cY67ipbh1mABhjJ9tIhxClHE"
     )
+    @Published var loadingProgress: Double = 0.0
 
     override init() {
         super.init()
@@ -45,6 +46,7 @@ class VenueMapViewModel: NSObject, ObservableObject {
         let pageSize = 1000
         var page = 0
         let maxPages = 100
+        loadingProgress = 0.0
         do {
             while page < maxPages {
                 let from = page * pageSize
@@ -56,6 +58,9 @@ class VenueMapViewModel: NSObject, ObservableObject {
                     .execute()
                 let venues = try JSONDecoder().decode([Venue].self, from: response.data)
                 allVenues.append(contentsOf: venues)
+                DispatchQueue.main.async {
+                    self.loadingProgress = Double(page + 1) / Double(maxPages)
+                }
                 if venues.count < pageSize { break }
                 page += 1
             }
@@ -63,11 +68,13 @@ class VenueMapViewModel: NSObject, ObservableObject {
                 self.allVenues = allVenues
                 self.updateVisibleMarkers()
                 self.isLoading = false
+                self.loadingProgress = 1.0
             }
         } catch {
             DispatchQueue.main.async {
                 self.error = error.localizedDescription
                 self.isLoading = false
+                self.loadingProgress = 0.0
             }
         }
     }

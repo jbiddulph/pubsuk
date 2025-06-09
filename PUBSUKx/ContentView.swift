@@ -77,6 +77,8 @@ struct EventWithVenue: Identifiable, Decodable {
 struct VenueSummary: Decodable {
     let id: Int
     let venuename: String
+    let latitude: String?
+    let longitude: String?
 }
 
 // MARK: - Color Extension
@@ -108,6 +110,19 @@ extension Color {
             blue: Double(b) / 255,
             opacity: Double(a) / 255
         )
+    }
+}
+
+// Add this near the top of the file, after imports and before ContentView
+struct DummyAnnotation: Identifiable { let id = UUID() }
+
+struct EquatableCoordinateRegion: Equatable {
+    var region: MKCoordinateRegion
+    static func == (lhs: EquatableCoordinateRegion, rhs: EquatableCoordinateRegion) -> Bool {
+        lhs.region.center.latitude == rhs.region.center.latitude &&
+        lhs.region.center.longitude == rhs.region.center.longitude &&
+        lhs.region.span.latitudeDelta == rhs.region.span.latitudeDelta &&
+        lhs.region.span.longitudeDelta == rhs.region.span.longitudeDelta
     }
 }
 
@@ -258,18 +273,43 @@ struct VenuesListView: View {
     @State private var counties: [String] = []
     @State private var selectedTown: String? = nil
     @State private var towns: [String] = []
+    @State private var isLiveFilter: Bool? = nil
     var body: some View {
         VStack {
             HStack {
                 Spacer()
-                Button(action: { showFilterMenu.toggle() }) {
-                    Image(systemName: "line.3.horizontal.decrease.circle")
-                        .font(.title2)
-                        .foregroundColor(.primaryOrange)
-                        .padding(8)
+                if venues.count > 100 {
+                    Button(action: { showFilterMenu.toggle() }) {
+                        Image(systemName: "line.3.horizontal.decrease.circle")
+                            .font(.title2)
+                            .foregroundColor(.primaryOrange)
+                            .padding(8)
+                    }
                 }
             }
             .padding(.horizontal)
+            // Add Clear Filter button if any filter is active
+            if selectedCounty != nil || selectedTown != nil || isLiveFilter != nil {
+                Button(action: {
+                    selectedCounty = nil
+                    selectedTown = nil
+                    isLiveFilter = nil
+                    towns = []
+                    page = 0
+                    fetchVenues()
+                }) {
+                    HStack {
+                        Image(systemName: "xmark.circle")
+                        Text("Clear Filter")
+                    }
+                    .foregroundColor(.primaryOrange)
+                    .padding(.vertical, 4)
+                    .padding(.horizontal, 12)
+                    .background(Color.secondaryBlue)
+                    .cornerRadius(8)
+                }
+                .padding(.bottom, 4)
+            }
             if isLoading {
                 ProgressView()
             } else {
@@ -357,6 +397,7 @@ struct VenuesListView: View {
                     }
                     .onChange(of: selectedCounty) { newCounty in
                         selectedTown = nil
+                        page = 0 // Reset page when county changes
                         if let county = newCounty {
                             fetchTowns(for: county)
                         } else {
@@ -370,6 +411,22 @@ struct VenuesListView: View {
                                 Text(town).tag(Optional(town))
                             }
                         }
+                        .onChange(of: selectedTown) { _ in
+                            page = 0 // Reset page when town changes
+                        }
+                    }
+                    Section(header: Text("Live Status")) {
+                        Toggle(isOn: Binding(
+                            get: { isLiveFilter ?? false },
+                            set: { newValue in isLiveFilter = newValue; page = 0 } // Reset page when live filter changes
+                        )) {
+                            Text("Show only live venues")
+                        }
+                        Button("Clear Live Filter") {
+                            isLiveFilter = nil
+                            page = 0 // Reset page when clearing live filter
+                        }
+                        .font(.caption)
                     }
                 }
                 .navigationBarTitle("Filter by County & Town", displayMode: .inline)
@@ -378,25 +435,21 @@ struct VenuesListView: View {
                         selectedCounty = nil
                         selectedTown = nil
                         towns = []
+                        isLiveFilter = nil
+                        page = 0 // Reset page when clearing all filters
                     },
                     trailing: Button("Apply") {
                         showFilterMenu = false
+                        page = 0 // Reset page when applying filters
                         fetchVenues()
                     }
                 )
             }
         }
         .sheet(item: $selectedVenue) { venue in
-            VenueDetailView(
-                venue: venue,
-                onClose: { selectedVenue = nil },
-                showAddEventModal: $showAddEventModal,
-                selectedVenueForEvent: $selectedVenueForEvent,
-                userRole: userRole,
-                onVenueUpdated: {
-                    fetchVenues()
-                }
-            )
+            VenueDetailsModernView(venue: venue, userRole: userRole, onVenueUpdated: {
+                fetchVenues()
+            })
         }
         .font(.custom("Kanit-Regular", size: 20))
         .background(Color.secondaryBlue)
@@ -417,6 +470,9 @@ struct VenuesListView: View {
                 }
                 if let town = selectedTown {
                     query = query.eq("town", value: town)
+                }
+                if let isLive = isLiveFilter {
+                    query = query.eq("is_live", value: isLive ? "1" : "0")
                 }
                 let response = try await query
                     .order("id", ascending: true)
@@ -572,6 +628,21 @@ struct VenueMapView: View {
                 }
                 .transition(.move(edge: .leading))
                 .zIndex(2)
+            }
+            // Loading progress overlay
+            if viewModel.isLoading {
+                VStack {
+                    ProgressView(value: viewModel.loadingProgress)
+                        .progressViewStyle(LinearProgressViewStyle())
+                        .padding(.horizontal, 40)
+                    Text("Loading venues… \(Int(viewModel.loadingProgress * 100))%")
+                        .foregroundColor(.appWhite)
+                        .font(.custom("Kanit-SemiBold", size: 16))
+                }
+                .padding()
+                .background(Color.black.opacity(0.7))
+                .cornerRadius(12)
+                .frame(maxWidth: 300)
             }
         }
         .animation(.easeInOut, value: showMenu)
@@ -775,10 +846,31 @@ struct VenueDetailView: View {
         }
     }
     func deleteVenue() {
-        // Implement delete venue logic
-        print("Deleting venue...")
+        guard !isDeleting else { return }
         isDeleting = true
-        // Add your delete logic here
+        let client = SupabaseClient(
+            supabaseURL: URL(string: "https://isprmebbahzjnrekkvxv.supabase.co")!,
+            supabaseKey: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImlzcHJtZWJiYWh6am5yZWtrdnh2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3MDgxMTcxOTQsImV4cCI6MjAyMzY5MzE5NH0.KQTIMSGTyNruxx1VQw8cY67ipbh1mABhjJ9tIhxClHE"
+        )
+        Task {
+            do {
+                _ = try await client
+                    .from("Venue")
+                    .delete()
+                    .eq("id", value: venue.id)
+                    .execute()
+                DispatchQueue.main.async {
+                    isDeleting = false
+                    onVenueUpdated?()
+                    // Optionally, dismiss the view if presented modally
+                }
+            } catch {
+                print("Error deleting venue: \(error)")
+                DispatchQueue.main.async {
+                    isDeleting = false
+                }
+            }
+        }
     }
 }
 
@@ -1103,6 +1195,12 @@ struct EventsListView: View {
     @State private var selectedImage: UIImage? = nil
     @State private var showImagePicker = false
     @State private var newEventDateObj = Date()
+    // Filtering state for events
+    @State private var showFilterMenu = false
+    @State private var selectedCounty: String? = nil
+    @State private var counties: [String] = []
+    @State private var selectedTown: String? = nil
+    @State private var towns: [String] = []
     var body: some View {
         VStack {
             if userRole == "superadmin" || userRole == "venueadmin" {
@@ -1115,11 +1213,22 @@ struct EventsListView: View {
                             .foregroundColor(.primaryOrange)
                     }
                     .padding()
-                    .background(Color.secondaryBlue)
-                    .cornerRadius(10)
                 }
+                .cornerRadius(10)
                 .padding(.top, 8)
             }
+            HStack {
+                Spacer()
+                if events.count > 100 || selectedCounty != nil || selectedTown != nil {
+                    Button(action: { showFilterMenu.toggle() }) {
+                        Image(systemName: "line.3.horizontal.decrease.circle")
+                            .font(.title2)
+                            .foregroundColor(.primaryOrange)
+                            .padding(8)
+                    }
+                }
+            }
+            .padding(.horizontal)
             if isLoading || !eventsLoaded {
                 ProgressView("Loading events and venues...")
             } else {
@@ -1259,6 +1368,7 @@ struct EventsListView: View {
             fetchEventsWithVenue()
             fetchUserAndRole()
             fetchCitiesAndCategories()
+            loadCounties()
         }
         .font(.custom("Kanit-Regular", size: 20))
         .background(Color.secondaryBlue)
@@ -1270,6 +1380,52 @@ struct EventsListView: View {
                 onClose: { selectedEvent = nil }
             )
         }
+        .sheet(isPresented: $showFilterMenu) {
+            NavigationView {
+                Form {
+                    Picker("County", selection: $selectedCounty) {
+                        Text("Any").tag(nil as String?)
+                        ForEach(counties, id: \.self) { county in
+                            Text(county).tag(Optional(county))
+                        }
+                    }
+                    .onChange(of: selectedCounty) { newCounty in
+                        selectedTown = nil
+                        page = 0 // Reset page when county changes
+                        if let county = newCounty {
+                            fetchTowns(for: county)
+                        } else {
+                            towns = []
+                        }
+                    }
+                    if !towns.isEmpty {
+                        Picker("Town", selection: $selectedTown) {
+                            Text("Any").tag(nil as String?)
+                            ForEach(towns, id: \.self) { town in
+                                Text(town).tag(Optional(town))
+                            }
+                        }
+                        .onChange(of: selectedTown) { _ in
+                            page = 0 // Reset page when town changes
+                        }
+                    }
+                }
+                .navigationBarTitle("Filter by County & Town", displayMode: .inline)
+                .navigationBarItems(
+                    leading: Button("Clear") {
+                        selectedCounty = nil
+                        selectedTown = nil
+                        towns = []
+                        page = 0 // Reset page when clearing all filters
+                    },
+                    trailing: Button("Apply") {
+                        showFilterMenu = false
+                        page = 0 // Reset page when applying filters
+                        fetchEventsWithVenue()
+                    }
+                )
+            }
+        }
     }
     func fetchEventsWithVenue() {
         isLoading = true
@@ -1280,9 +1436,16 @@ struct EventsListView: View {
             do {
                 let from = page * pageSize
                 let to = from + pageSize - 1
-                let response = try await client
+                var query = client
                     .from("Event")
-                    .select("*, Venue(id, venuename), cityId, categoryId")
+                    .select("*, Venue(id, venuename, county, town), cityId, categoryId")
+                if let county = selectedCounty {
+                    query = query.eq("Venue.county", value: county)
+                }
+                if let town = selectedTown {
+                    query = query.eq("Venue.town", value: town)
+                }
+                let response = try await query
                     .order("event_start", ascending: true)
                     .range(from: from, to: to)
                     .execute()
@@ -1371,6 +1534,42 @@ struct EventsListView: View {
                     self.userRole = nil
                     self.userId = nil
                 }
+            }
+        }
+    }
+    func loadCounties() {
+        Task {
+            do {
+                let response = try await client
+                    .from("Venue")
+                    .select("county")
+                    .execute()
+                let decoded = try JSONDecoder().decode([[String: String?]].self, from: response.data)
+                let uniqueCounties = Set(decoded.compactMap { $0["county"] ?? nil }).filter { !$0.isEmpty }
+                DispatchQueue.main.async {
+                    counties = Array(uniqueCounties).sorted()
+                }
+            } catch {
+                print("Failed to load counties for events: \(error)")
+            }
+        }
+    }
+    func fetchTowns(for county: String) {
+        Task {
+            do {
+                let response = try await client
+                    .from("Venue")
+                    .select("town")
+                    .eq("county", value: county)
+                    .execute()
+                let decoded = try JSONDecoder().decode([[String: String?]].self, from: response.data)
+                let uniqueTowns = Set(decoded.compactMap { $0["town"] ?? nil }).filter { !$0.isEmpty }
+                DispatchQueue.main.async {
+                    towns = Array(uniqueTowns).sorted()
+                }
+            } catch {
+                print("Failed to fetch towns for events: \(error)")
+                towns = []
             }
         }
     }
@@ -2203,6 +2402,7 @@ struct VenueEditModal: View {
         supabaseURL: URL(string: "https://isprmebbahzjnrekkvxv.supabase.co")!,
         supabaseKey: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImlzcHJtZWJiYWh6am5yZWtrdnh2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3MDgxMTcxOTQsImV4cCI6MjAyMzY5MzE5NH0.KQTIMSGTyNruxx1VQw8cY67ipbh1mABhjJ9tIhxClHE"
     )
+    @State private var equatableRegion: EquatableCoordinateRegion
     init(venue: Venue, onClose: @escaping () -> Void, onVenueUpdated: (() -> Void)? = nil) {
         self.venue = venue
         self.onClose = onClose
@@ -2227,6 +2427,12 @@ struct VenueEditModal: View {
         _photo = State(initialValue: venue.photo ?? "")
         _is_live = State(initialValue: venue.is_live ?? "")
         _updated_at = State(initialValue: venue.updated_at ?? "")
+        let lat = Double(venue.latitude ?? "") ?? 51.5074
+        let lon = Double(venue.longitude ?? "") ?? -0.1278
+        _equatableRegion = State(initialValue: EquatableCoordinateRegion(region: MKCoordinateRegion(
+            center: CLLocationCoordinate2D(latitude: lat, longitude: lon),
+            span: MKCoordinateSpan(latitudeDelta: 0.01, longitudeDelta: 0.01)
+        )))
     }
     var photoURL: URL? {
         if photo.isEmpty { return nil }
@@ -2298,6 +2504,31 @@ struct VenueEditModal: View {
                         ProgressView()
                         Spacer()
                     }
+                }
+                Section {
+                    TextField("Latitude", text: $latitude)
+                        .keyboardType(.decimalPad)
+                    TextField("Longitude", text: $longitude)
+                        .keyboardType(.decimalPad)
+                    ZStack {
+                        Map(coordinateRegion: $equatableRegion.region, interactionModes: .all, showsUserLocation: false)
+                            .frame(height: 200)
+                            .cornerRadius(12)
+                        Image(systemName: "plus")
+                            .font(.system(size: 32, weight: .bold))
+                            .foregroundColor(.primaryOrange)
+                            .background(Circle().fill(Color.white.opacity(0.7)).frame(width: 40, height: 40))
+                    }
+                    .onChange(of: equatableRegion) { newEquatableRegion in
+                        let newCenter = newEquatableRegion.region.center
+                        latitude = String(format: "%.6f", newCenter.latitude)
+                        longitude = String(format: "%.6f", newCenter.longitude)
+                    }
+                    Text("Move the map so the crosshair is over the venue location.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                } header: {
+                    Text("Latitude & Longitude")
                 }
             }
             .navigationBarTitle("Edit Venue", displayMode: .inline)
@@ -2381,3 +2612,293 @@ struct VenueEditModal: View {
         }
     }
 }
+
+// Modern Venue Details View styled after the Tomorrowland design
+struct VenueDetailsModernView: View {
+    let venue: Venue
+    var userRole: String? = nil
+    @State private var showEditModal = false
+    @State private var showDeleteConfirmation = false
+    @State private var isDeleting = false
+    var onVenueUpdated: (() -> Void)? = nil
+
+    var body: some View {
+        ZStack {
+            Color.secondaryBlue.ignoresSafeArea()
+            ScrollView {
+                VStack(spacing: 0) {
+                    // Header Image with venue name overlay
+                    if let photo = venue.photo, !photo.isEmpty, photo != "NULL" {
+                        ZStack(alignment: .bottomLeading) {
+                            AsyncImage(
+                                url: URL(string: photo.hasPrefix("http")
+                                    ? photo
+                                    : "https://isprmebbahzjnrekkvxv.supabase.co/storage/v1/object/public/venue_images/\(photo)")
+                            ) { image in
+                                image
+                                    .resizable()
+                                    .scaledToFill()
+                                    .frame(height: 220)
+                                    .clipped()
+                            } placeholder: {
+                                Color.darkBlue.frame(height: 220)
+                            }
+                            // Gradient overlay at bottom
+                            LinearGradient(
+                                gradient: Gradient(colors: [Color.black.opacity(0.7), .clear]),
+                                startPoint: .bottom, endPoint: .top
+                            )
+                            .frame(height: 80)
+                            .frame(maxWidth: .infinity, alignment: .bottom)
+                            // Venue name overlay
+                            HStack {
+                                Text(venue.venuename)
+                                    .font(.custom("Kanit-Bold", size: 28))
+                                    .foregroundColor(.appWhite)
+                                    .padding(.horizontal, 16)
+                                    .padding(.vertical, 8)
+                                    .background(Color.black.opacity(0.5))
+                                    .cornerRadius(10)
+                                    .padding([.leading, .bottom], 16)
+                                Spacer()
+                            }
+                            .frame(maxWidth: .infinity, alignment: .bottomLeading)
+                        }
+                    }
+
+                    VStack(alignment: .leading, spacing: 18) {
+                        // Edit/Delete buttons for admin roles
+                        if userRole == "superadmin" || userRole == "venueadmin" {
+                            HStack(spacing: 16) {
+                                Button("Edit") {
+                                    showEditModal = true
+                                }
+                                .padding()
+                                .background(Color.primaryOrange)
+                                .foregroundColor(.white)
+                                .cornerRadius(8)
+                                Button("Delete") {
+                                    showDeleteConfirmation = true
+                                }
+                                .padding()
+                                .background(Color.red)
+                                .foregroundColor(.white)
+                                .cornerRadius(8)
+                            }
+                        }
+
+                        // Description
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("Description")
+                                .font(.custom("Kanit-SemiBold", size: 18))
+                                .foregroundColor(.primaryOrange)
+                            Text(venue.address)
+                                .foregroundColor(.appWhite)
+                                .font(.custom("Kanit-Regular", size: 16))
+                            if let desc = venue.venuetype, !desc.isEmpty {
+                                Text(desc)
+                                    .foregroundColor(.appWhite)
+                                    .font(.custom("Kanit-Regular", size: 16))
+                            }
+                        }
+
+                        // Map
+                        if let latStr = venue.latitude, let lonStr = venue.longitude,
+                           let lat = Double(latStr), let lon = Double(lonStr) {
+                            Map(
+                                position: .constant(.region(MKCoordinateRegion(
+                                    center: CLLocationCoordinate2D(latitude: lat, longitude: lon),
+                                    span: MKCoordinateSpan(latitudeDelta: 0.01, longitudeDelta: 0.01)
+                                )))
+                            ) {
+                                Annotation(venue.venuename, coordinate: CLLocationCoordinate2D(latitude: lat, longitude: lon)) {
+                                    Image(systemName: "mappin.circle.fill")
+                                        .foregroundColor(.primaryOrange)
+                                        .font(.title)
+                                }
+                            }
+                            .frame(height: 120)
+                            .cornerRadius(16)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 16)
+                                    .stroke(Color.primaryOrange, lineWidth: 2)
+                            )
+                        }
+
+                        Spacer(minLength: 40)
+                    }
+                    .padding(.horizontal, 20)
+                    .padding(.top, 16)
+                    .padding(.bottom, 24)
+                }
+            }
+            // Sheet and alert for edit/delete actions
+            .sheet(isPresented: $showEditModal) {
+                VenueEditModal(venue: venue, onClose: { showEditModal = false }, onVenueUpdated: {
+                    showEditModal = false
+                    onVenueUpdated?()
+                })
+            }
+            .alert(isPresented: $showDeleteConfirmation) {
+                Alert(
+                    title: Text("Delete Venue"),
+                    message: Text("Are you sure you want to delete this venue? This action cannot be undone."),
+                    primaryButton: .destructive(Text("Delete")) {
+                        deleteVenue()
+                    },
+                    secondaryButton: .cancel()
+                )
+            }
+        }
+    }
+    func deleteVenue() {
+        guard !isDeleting else { return }
+        isDeleting = true
+        let client = SupabaseClient(
+            supabaseURL: URL(string: "https://isprmebbahzjnrekkvxv.supabase.co")!,
+            supabaseKey: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImlzcHJtZWJiYWh6am5yZWtrdnh2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3MDgxMTcxOTQsImV4cCI6MjAyMzY5MzE5NH0.KQTIMSGTyNruxx1VQw8cY67ipbh1mABhjJ9tIhxClHE"
+        )
+        Task {
+            do {
+                _ = try await client
+                    .from("Venue")
+                    .delete()
+                    .eq("id", value: venue.id)
+                    .execute()
+                DispatchQueue.main.async {
+                    isDeleting = false
+                    onVenueUpdated?()
+                    // Optionally, dismiss the view if presented modally
+                }
+            } catch {
+                print("Error deleting venue: \(error)")
+                DispatchQueue.main.async {
+                    isDeleting = false
+                }
+            }
+        }
+    }
+}
+
+// Modern Event Details View styled after the Tomorrowland design
+struct EventDetailsModernView: View {
+    let event: EventWithVenue
+
+    var eventDate: String {
+        guard let start = event.event_start else { return "" }
+        let parts = start.components(separatedBy: ["T", " "])
+        return parts.first ?? ""
+    }
+    var eventTime: String {
+        guard let start = event.event_start else { return "" }
+        let parts = start.components(separatedBy: ["T", " "])
+        if parts.count > 1 {
+            return parts[1].prefix(5).description // HH:mm
+        }
+        return ""
+    }
+
+    var body: some View {
+        ZStack {
+            Color.secondaryBlue.ignoresSafeArea()
+            ScrollView {
+                VStack(spacing: 0) {
+                    // Header Image
+                    if let photo = event.photo, !photo.isEmpty, photo != "NULL" {
+                        AsyncImage(
+                            url: URL(string: photo.hasPrefix("http")
+                                ? photo
+                                : "https://isprmebbahzjnrekkvxv.supabase.co/storage/v1/object/public/event_images/\(photo)")
+                        ) { image in
+                            image
+                                .resizable()
+                                .scaledToFill()
+                                .frame(height: 220)
+                                .clipped()
+                        } placeholder: {
+                            Color.darkBlue.frame(height: 220)
+                        }
+                    }
+
+                    VStack(alignment: .leading, spacing: 18) {
+                        // Event Name
+                        Text(event.event_title)
+                            .font(.custom("Kanit-Bold", size: 32))
+                            .foregroundColor(.appWhite)
+                            .padding(.top, 8)
+
+                        // Date and Time
+                        HStack(spacing: 18) {
+                            if !eventDate.isEmpty {
+                                Label(eventDate, systemImage: "calendar")
+                                    .foregroundColor(.appWhite)
+                                    .font(.custom("Kanit-Regular", size: 16))
+                            }
+                            if !eventTime.isEmpty {
+                                Label(eventTime, systemImage: "clock")
+                                    .foregroundColor(.appWhite)
+                                    .font(.custom("Kanit-Regular", size: 16))
+                            }
+                        }
+
+                        // Description
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("Description")
+                                .font(.custom("Kanit-SemiBold", size: 18))
+                                .foregroundColor(.primaryOrange)
+                            if let desc = event.description, !desc.isEmpty {
+                                Text(desc)
+                                    .foregroundColor(.appWhite)
+                                    .font(.custom("Kanit-Regular", size: 16))
+                            }
+                        }
+
+                        // Map
+                        if let venue = event.venue, let latStr = venue.latitude, let lonStr = venue.longitude,
+                           let lat = Double(latStr), let lon = Double(lonStr) {
+                            Map(
+                                position: .constant(.region(MKCoordinateRegion(
+                                    center: CLLocationCoordinate2D(latitude: lat, longitude: lon),
+                                    span: MKCoordinateSpan(latitudeDelta: 0.01, longitudeDelta: 0.01)
+                                )))
+                            ) {
+                                Annotation(venue.venuename, coordinate: CLLocationCoordinate2D(latitude: lat, longitude: lon)) {
+                                    Image(systemName: "mappin.circle.fill")
+                                        .foregroundColor(.primaryOrange)
+                                        .font(.title)
+                                }
+                            }
+                            .frame(height: 120)
+                            .cornerRadius(16)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 16)
+                                    .stroke(Color.primaryOrange, lineWidth: 2)
+                            )
+                        }
+
+                        Spacer(minLength: 40)
+                    }
+                    .padding(.horizontal, 20)
+                    .padding(.top, 16)
+                }
+            }
+        }
+    }
+}
+
+// Helper for corner radius on specific corners
+extension View {
+    func cornerRadius(_ radius: CGFloat, corners: UIRectCorner) -> some View {
+        clipShape( RoundedCorner(radius: radius, corners: corners) )
+    }
+}
+
+struct RoundedCorner: Shape {
+    var radius: CGFloat = .infinity
+    var corners: UIRectCorner = .allCorners
+    func path(in rect: CGRect) -> Path {
+        let path = UIBezierPath(roundedRect: rect, byRoundingCorners: corners, cornerRadii: CGSize(width: radius, height: radius))
+        return Path(path.cgPath)
+    }
+}
+
