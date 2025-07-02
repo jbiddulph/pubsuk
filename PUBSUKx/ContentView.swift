@@ -87,7 +87,7 @@ struct Note: Identifiable, Decodable {
     let user_id: String
     let venue_id: Int?
     let listingId: Int?
-    let content: String
+    let text: String
     let created_at: String?
 }
 
@@ -96,7 +96,8 @@ struct NewNote: Encodable {
     let user_id: String
     let venue_id: Int
     let listingId: Int
-    let content: String
+    let text: String
+    let created_at: String
 }
 
 // MARK: - Color Extension
@@ -840,7 +841,7 @@ struct VenueDetailView: View {
                             VStack(alignment: .leading, spacing: 8) {
                                 ForEach(notes) { note in
                                     VStack(alignment: .leading, spacing: 2) {
-                                        Text(note.content)
+                                        Text(note.text)
                                             .foregroundColor(.appWhite)
                                         HStack(spacing: 8) {
                                             Text("User: \(note.user_id.prefix(8))")
@@ -995,14 +996,16 @@ struct VenueDetailView: View {
         isAddingNote = true
         Task {
             do {
+                let formatter = ISO8601DateFormatter()
                 let newNote = NewNote(
                     user_id: userId,
                     venue_id: venue.id,
                     listingId: venue.id,
-                    content: newNoteText.trimmingCharacters(in: .whitespacesAndNewlines)
+                    text: newNoteText.trimmingCharacters(in: .whitespacesAndNewlines),
+                    created_at: formatter.string(from: Date())
                 )
                 _ = try await client
-                    .from("Notes")
+                    .from("Note")
                     .insert([newNote])
                     .execute()
                 DispatchQueue.main.async {
