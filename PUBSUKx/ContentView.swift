@@ -81,6 +81,24 @@ struct VenueSummary: Decodable {
     let longitude: String?
 }
 
+// Add this after VenueSummary or near the top:
+struct Note: Identifiable, Decodable {
+    let id: Int
+    let user_id: String
+    let venue_id: Int?
+    let listingId: Int?
+    let content: String
+    let created_at: String?
+}
+
+// After Note struct:
+struct NewNote: Encodable {
+    let user_id: String
+    let venue_id: Int
+    let listingId: Int
+    let content: String
+}
+
 // MARK: - Color Extension
 extension Color {
     static let secondaryBlue = Color(hex: "#1E2937")
@@ -268,7 +286,6 @@ struct VenuesListView: View {
         supabaseKey: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImlzcHJtZWJiYWh6am5yZWtrdnh2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3MDgxMTcxOTQsImV4cCI6MjAyMzY5MzE5NH0.KQTIMSGTyNruxx1VQw8cY67ipbh1mABhjJ9tIhxClHE"
     )
     // Filter states
-    @State private var showFilterMenu = false
     @State private var selectedCounty: String? = nil
     @State private var counties: [String] = []
     @State private var selectedTown: String? = nil
@@ -276,40 +293,59 @@ struct VenuesListView: View {
     @State private var isLiveFilter: Bool? = nil
     var body: some View {
         VStack {
-            HStack {
-                Spacer()
-                if venues.count > 100 {
-                    Button(action: { showFilterMenu.toggle() }) {
-                        Image(systemName: "line.3.horizontal.decrease.circle")
-                            .font(.title2)
-                            .foregroundColor(.primaryOrange)
-                            .padding(8)
+            // --- FILTER PICKERS AT TOP ---
+            HStack(alignment: .center, spacing: 8) {
+                Picker("County", selection: $selectedCounty) {
+                    Text("County").tag(nil as String?)
+                    ForEach(counties, id: \.self) { county in
+                        Text(county).tag(Optional(county))
                     }
+                }
+                .pickerStyle(MenuPickerStyle())
+                .frame(maxWidth: .infinity)
+                .onChange(of: selectedCounty) { newCounty in
+                    selectedTown = nil
+                    if let county = newCounty {
+                        fetchTowns(for: county)
+                    } else {
+                        towns = []
+                    }
+                    page = 0
+                    fetchVenues()
+                }
+                if !towns.isEmpty {
+                    Picker("Town", selection: $selectedTown) {
+                        Text("Town").tag(nil as String?)
+                        ForEach(towns, id: \.self) { town in
+                            Text(town).tag(Optional(town))
+                        }
+                    }
+                    .pickerStyle(MenuPickerStyle())
+                    .frame(maxWidth: .infinity)
+                    .onChange(of: selectedTown) { _ in
+                        page = 0
+                        fetchVenues()
+                    }
+                } else {
+                    Spacer().frame(maxWidth: .infinity)
+                }
+                if selectedCounty != nil || selectedTown != nil {
+                    Button(action: {
+                        selectedCounty = nil
+                        selectedTown = nil
+                        towns = []
+                        page = 0
+                        fetchVenues()
+                    }) {
+                        Image(systemName: "xmark.circle")
+                            .foregroundColor(.primaryOrange)
+                            .font(.title2)
+                    }
+                    .padding(.leading, 4)
                 }
             }
             .padding(.horizontal)
-            // Add Clear Filter button if any filter is active
-            if selectedCounty != nil || selectedTown != nil || isLiveFilter != nil {
-                Button(action: {
-                    selectedCounty = nil
-                    selectedTown = nil
-                    isLiveFilter = nil
-                    towns = []
-                    page = 0
-                    fetchVenues()
-                }) {
-                    HStack {
-                        Image(systemName: "xmark.circle")
-                        Text("Clear Filter")
-                    }
-                    .foregroundColor(.primaryOrange)
-                    .padding(.vertical, 4)
-                    .padding(.horizontal, 12)
-                    .background(Color.secondaryBlue)
-                    .cornerRadius(8)
-                }
-                .padding(.bottom, 4)
-            }
+            // --- END FILTER PICKERS ---
             if isLoading {
                 ProgressView()
             } else {
@@ -345,111 +381,59 @@ struct VenuesListView: View {
                 .background(Color.secondaryBlue)
                 .listStyle(PlainListStyle())
             }
-            HStack {
-                Button("Previous") {
-                    if page > 0 {
-                        page -= 1
-                        fetchVenues()
+            // Only show pagination if venues.count > 100
+            if venues.count > 100 {
+                HStack {
+                    Button("Previous") {
+                        if page > 0 {
+                            page -= 1
+                            fetchVenues()
+                        }
                     }
-                }
-                .disabled(page == 0 || isLoading)
-                .padding(.vertical, 4)
-                .padding(.horizontal, 10)
-                .background(Color.primaryOrange)
-                .foregroundColor(.appWhite)
-                .cornerRadius(8)
-                .font(.custom("Kanit-SemiBold", size: 14))
-                Spacer()
-                // Page number in appWhite
-                Text("Page \(page + 1)")
+                    .disabled(page == 0 || isLoading)
+                    .padding(.vertical, 4)
+                    .padding(.horizontal, 10)
+                    .background(Color.primaryOrange)
                     .foregroundColor(.appWhite)
+                    .cornerRadius(8)
                     .font(.custom("Kanit-SemiBold", size: 14))
-                Spacer()
-                Button("Next") {
-                    if hasMore {
-                        page += 1
-                        fetchVenues()
+                    Spacer()
+                    // Page number in appWhite
+                    Text("Page \(page + 1)")
+                        .foregroundColor(.appWhite)
+                        .font(.custom("Kanit-SemiBold", size: 14))
+                    Spacer()
+                    Button("Next") {
+                        if hasMore {
+                            page += 1
+                            fetchVenues()
+                        }
                     }
+                    .disabled(!hasMore || isLoading)
+                    .padding(.vertical, 4)
+                    .padding(.horizontal, 10)
+                    .background(Color.primaryOrange)
+                    .foregroundColor(.appWhite)
+                    .cornerRadius(8)
+                    .font(.custom("Kanit-SemiBold", size: 14))
                 }
-                .disabled(!hasMore || isLoading)
-                .padding(.vertical, 4)
-                .padding(.horizontal, 10)
-                .background(Color.primaryOrange)
-                .foregroundColor(.appWhite)
-                .cornerRadius(8)
-                .font(.custom("Kanit-SemiBold", size: 14))
+                .padding()
+                .background(Color.darkBlue)
             }
-            .padding()
-            .background(Color.darkBlue)
         }
         .onAppear {
             fetchVenues()
             loadCounties()
         }
-        .sheet(isPresented: $showFilterMenu) {
-            NavigationView {
-                Form {
-                    Picker("County", selection: $selectedCounty) {
-                        Text("Any").tag(nil as String?)
-                        ForEach(counties, id: \.self) { county in
-                            Text(county).tag(Optional(county))
-                        }
-                    }
-                    .onChange(of: selectedCounty) { newCounty in
-                        selectedTown = nil
-                        page = 0 // Reset page when county changes
-                        if let county = newCounty {
-                            fetchTowns(for: county)
-                        } else {
-                            towns = []
-                        }
-                    }
-                    if !towns.isEmpty {
-                        Picker("Town", selection: $selectedTown) {
-                            Text("Any").tag(nil as String?)
-                            ForEach(towns, id: \.self) { town in
-                                Text(town).tag(Optional(town))
-                            }
-                        }
-                        .onChange(of: selectedTown) { _ in
-                            page = 0 // Reset page when town changes
-                        }
-                    }
-                    Section(header: Text("Live Status")) {
-                        Toggle(isOn: Binding(
-                            get: { isLiveFilter ?? false },
-                            set: { newValue in isLiveFilter = newValue; page = 0 } // Reset page when live filter changes
-                        )) {
-                            Text("Show only live venues")
-                        }
-                        Button("Clear Live Filter") {
-                            isLiveFilter = nil
-                            page = 0 // Reset page when clearing live filter
-                        }
-                        .font(.caption)
-                    }
-                }
-                .navigationBarTitle("Filter by County & Town", displayMode: .inline)
-                .navigationBarItems(
-                    leading: Button("Clear") {
-                        selectedCounty = nil
-                        selectedTown = nil
-                        towns = []
-                        isLiveFilter = nil
-                        page = 0 // Reset page when clearing all filters
-                    },
-                    trailing: Button("Apply") {
-                        showFilterMenu = false
-                        page = 0 // Reset page when applying filters
-                        fetchVenues()
-                    }
-                )
-            }
-        }
         .sheet(item: $selectedVenue) { venue in
             VenueDetailsModernView(venue: venue, userRole: userRole, onVenueUpdated: {
                 fetchVenues()
             })
+        }
+        .onChange(of: selectedVenue) { newValue in
+            if newValue == nil {
+                fetchVenues()
+            }
         }
         .font(.custom("Kanit-Regular", size: 20))
         .background(Color.secondaryBlue)
@@ -660,6 +644,18 @@ struct VenueDetailView: View {
     @State private var showEditModal = false
     @State private var showDeleteConfirmation = false
     @State private var isDeleting = false
+    // Notes state
+    @State private var notes: [Note] = []
+    @State private var newNoteText: String = ""
+    @State private var isAddingNote = false
+    @State private var notesLoading = false
+    @State private var notesError: String? = nil
+    @State private var userId: String? = nil
+    let client = SupabaseClient(
+        supabaseURL: URL(string: "https://isprmebbahzjnrekkvxv.supabase.co")!,
+        supabaseKey: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImlzcHJtZWJiYWh6am5yZWtrdnh2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3MDgxMTcxOTQsImV4cCI6MjAyMzY5MzE5NH0.KQTIMSGTyNruxx1VQw8cY67ipbh1mABhjJ9tIhxClHE"
+    )
+    @State private var showingAddNoteField: Bool = false
     var body: some View {
         if userRole == nil {
             VStack {
@@ -701,22 +697,24 @@ struct VenueDetailView: View {
                             .cornerRadius(8)
                         }
                     }
-                    Button(action: {
-                        selectedVenueForEvent = venue
-                        showAddEventModal = true
-                    }) {
-                        HStack {
-                            Image(systemName: "plus.circle.fill")
-                                .foregroundColor(.primaryOrange)
-                            Text("Add Event")
-                                .font(.custom("Kanit-SemiBold", size: 20))
-                                .foregroundColor(.primaryOrange)
+                    if (userId != nil) || (userRole == "superadmin" || userRole == "venueadmin") {
+                        Button(action: {
+                            selectedVenueForEvent = venue
+                            showAddEventModal = true
+                        }) {
+                            HStack {
+                                Image(systemName: "plus.circle.fill")
+                                    .foregroundColor(.primaryOrange)
+                                Text("Add Event")
+                                    .font(.custom("Kanit-SemiBold", size: 20))
+                                    .foregroundColor(.primaryOrange)
+                            }
+                            .padding(8)
+                            .background(Color.secondaryBlue)
+                            .cornerRadius(10)
                         }
-                        .padding(8)
-                        .background(Color.secondaryBlue)
-                        .cornerRadius(10)
+                        .padding(.bottom, 8)
                     }
-                    .padding(.bottom, 8)
                     if let slug = venue.slug, !slug.isEmpty {
                         Text("Slug: \(slug)")
                             .foregroundColor(.appWhite)
@@ -825,6 +823,83 @@ struct VenueDetailView: View {
                 .padding()
                 .font(.custom("Kanit-Regular", size: 20))
                 .background(Color.secondaryBlue)
+                // Notes Section (always present)
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Notes")
+                        .font(.custom("Kanit-Bold", size: 22))
+                        .foregroundColor(.primaryOrange)
+                    if notesLoading {
+                        ProgressView("Loading notes...")
+                    } else if let notesError = notesError {
+                        Text("Error: \(notesError)").foregroundColor(.red)
+                    } else if notes.isEmpty {
+                        Text("No notes yet. Be the first to add one!")
+                            .foregroundColor(.secondary)
+                    } else {
+                        ScrollView {
+                            VStack(alignment: .leading, spacing: 8) {
+                                ForEach(notes) { note in
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(note.content)
+                                            .foregroundColor(.appWhite)
+                                        HStack(spacing: 8) {
+                                            Text("User: \(note.user_id.prefix(8))")
+                                                .font(.caption2)
+                                                .foregroundColor(.secondary)
+                                            if let created = note.created_at, !created.isEmpty {
+                                                Text(created.prefix(16))
+                                                    .font(.caption2)
+                                                    .foregroundColor(.secondary)
+                                            }
+                                        }
+                                    }
+                                    .padding(6)
+                                    .background(Color.darkBlue.opacity(0.7))
+                                    .cornerRadius(8)
+                                }
+                            }
+                        }
+                        .frame(maxHeight: 180)
+                    }
+                    if let userId = userId {
+                        if showingAddNoteField {
+                            HStack {
+                                TextField("Add a note...", text: $newNoteText)
+                                    .textFieldStyle(RoundedBorderTextFieldStyle())
+                                    .disabled(isAddingNote)
+                                Button("Submit") {
+                                    addNote()
+                                    showingAddNoteField = false
+                                }
+                                .disabled(newNoteText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isAddingNote)
+                                Button("Cancel") {
+                                    showingAddNoteField = false
+                                    newNoteText = ""
+                                }
+                            }
+                        } else {
+                            Button(action: { showingAddNoteField = true }) {
+                                HStack {
+                                    Image(systemName: "plus.circle")
+                                    Text("Add Note")
+                                }
+                                .foregroundColor(.primaryOrange)
+                                .padding(.vertical, 4)
+                                .padding(.horizontal, 12)
+                                .background(Color.secondaryBlue)
+                                .cornerRadius(8)
+                            }
+                        }
+                    } else {
+                        Text("Sign in to add a note.")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                }
+                .padding()
+                .background(Color.secondaryBlue)
+                .cornerRadius(12)
+                .padding(.horizontal)
             }
             .background(Color.secondaryBlue)
             .sheet(isPresented: $showEditModal) {
@@ -842,6 +917,14 @@ struct VenueDetailView: View {
                     },
                     secondaryButton: .cancel()
                 )
+            }
+            // Always fetch notes and userId when venue changes or view appears
+            .onAppear {
+                fetchNotes()
+                fetchUserId()
+            }
+            .onChange(of: venue.id) { _ in
+                fetchNotes()
             }
         }
     }
@@ -868,6 +951,69 @@ struct VenueDetailView: View {
                 print("Error deleting venue: \(error)")
                 DispatchQueue.main.async {
                     isDeleting = false
+                }
+            }
+        }
+    }
+    func fetchNotes() {
+        notesLoading = true
+        notesError = nil
+        Task {
+            do {
+                let response = try await client
+                    .from("Note")
+                    .select()
+                    .eq("venue_id", value: venue.id)
+                    .execute()
+                let decoded = try JSONDecoder().decode([Note].self, from: response.data)
+                DispatchQueue.main.async {
+                    notes = decoded
+                    notesLoading = false
+                }
+            } catch {
+                DispatchQueue.main.async {
+                    notesError = error.localizedDescription
+                    notesLoading = false
+                }
+            }
+        }
+    }
+    func fetchUserId() {
+        Task {
+            do {
+                let session = try await client.auth.session
+                let user = session.user
+                let userIdString = user.id.uuidString
+                self.userId = userIdString
+            } catch {
+                self.userId = nil
+            }
+        }
+    }
+    func addNote() {
+        guard let userId = userId, !newNoteText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        isAddingNote = true
+        Task {
+            do {
+                let newNote = NewNote(
+                    user_id: userId,
+                    venue_id: venue.id,
+                    listingId: venue.id,
+                    content: newNoteText.trimmingCharacters(in: .whitespacesAndNewlines)
+                )
+                _ = try await client
+                    .from("Notes")
+                    .insert([newNote])
+                    .execute()
+                DispatchQueue.main.async {
+                    newNoteText = ""
+                    isAddingNote = false
+                    fetchNotes()
+                }
+            } catch {
+                DispatchQueue.main.async {
+                    isAddingNote = false
+                    notesError = error.localizedDescription
                 }
             }
         }
@@ -1327,42 +1473,6 @@ struct EventsListView: View {
                     }
                 }
             }
-            HStack {
-                Button("Previous") {
-                    if page > 0 {
-                        page -= 1
-                        fetchEventsWithVenue()
-                    }
-                }
-                .disabled(page == 0 || isLoading)
-                .padding(.vertical, 4)
-                .padding(.horizontal, 10)
-                .background(Color.primaryOrange)
-                .foregroundColor(.appWhite)
-                .cornerRadius(8)
-                .font(.custom("Kanit-SemiBold", size: 14))
-                Spacer()
-                // Page number in appWhite
-                Text("Page \(page + 1)")
-                    .foregroundColor(.appWhite)
-                    .font(.custom("Kanit-SemiBold", size: 14))
-                Spacer()
-                Button("Next") {
-                    if hasMore {
-                        page += 1
-                        fetchEventsWithVenue()
-                    }
-                }
-                .disabled(!hasMore || isLoading)
-                .padding(.vertical, 4)
-                .padding(.horizontal, 10)
-                .background(Color.primaryOrange)
-                .foregroundColor(.appWhite)
-                .cornerRadius(8)
-                .font(.custom("Kanit-SemiBold", size: 14))
-            }
-            .padding()
-            .background(Color.darkBlue)
         }
         .onAppear {
             fetchEventsWithVenue()
@@ -1380,52 +1490,7 @@ struct EventsListView: View {
                 onClose: { selectedEvent = nil }
             )
         }
-        .sheet(isPresented: $showFilterMenu) {
-            NavigationView {
-                Form {
-                    Picker("County", selection: $selectedCounty) {
-                        Text("Any").tag(nil as String?)
-                        ForEach(counties, id: \.self) { county in
-                            Text(county).tag(Optional(county))
-                        }
-                    }
-                    .onChange(of: selectedCounty) { newCounty in
-                        selectedTown = nil
-                        page = 0 // Reset page when county changes
-                        if let county = newCounty {
-                            fetchTowns(for: county)
-                        } else {
-                            towns = []
-                        }
-                    }
-                    if !towns.isEmpty {
-                        Picker("Town", selection: $selectedTown) {
-                            Text("Any").tag(nil as String?)
-                            ForEach(towns, id: \.self) { town in
-                                Text(town).tag(Optional(town))
-                            }
-                        }
-                        .onChange(of: selectedTown) { _ in
-                            page = 0 // Reset page when town changes
-                        }
-                    }
-                }
-                .navigationBarTitle("Filter by County & Town", displayMode: .inline)
-                .navigationBarItems(
-                    leading: Button("Clear") {
-                        selectedCounty = nil
-                        selectedTown = nil
-                        towns = []
-                        page = 0 // Reset page when clearing all filters
-                    },
-                    trailing: Button("Apply") {
-                        showFilterMenu = false
-                        page = 0 // Reset page when applying filters
-                        fetchEventsWithVenue()
-                    }
-                )
-            }
-        }
+        // Removed filter sheet and all references to isLiveFilter and fetchVenues for events
     }
     func fetchEventsWithVenue() {
         isLoading = true
@@ -1621,7 +1686,6 @@ struct DashboardView: View {
     @State private var error: String? = nil
     @State private var user: User? = nil
     @Binding var userRole: String?
-    @State private var debugLog: String = ""
     let client = SupabaseClient(
         supabaseURL: URL(string: "https://isprmebbahzjnrekkvxv.supabase.co")!,
         supabaseKey: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImlzcHJtZWJiYWh6am5yZWtrdnh2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3MDgxMTcxOTQsImV4cCI6MjAyMzY5MzE5NH0.KQTIMSGTyNruxx1VQw8cY67ipbh1mABhjJ9tIhxClHE"
@@ -1693,19 +1757,8 @@ struct DashboardView: View {
                 .padding()
             }
             Spacer()
-            ScrollView {
-                Text(debugLog)
-                    .font(.system(size: 12, design: .monospaced))
-                    .foregroundColor(.yellow)
-                    .padding()
-                    .background(Color.black.opacity(0.7))
-                    .cornerRadius(8)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            .frame(height: 200)
         }
         .onAppear {
-            debugLog.append("DashboardView appeared\n")
             loadUser()
         }
         .background(Color.darkBlue.ignoresSafeArea())
@@ -1714,13 +1767,10 @@ struct DashboardView: View {
     func loadUser() {
         Task {
             do {
-                debugLog.append("Trying to load user session\n")
                 let session = try await client.auth.session
-                debugLog.append("Loaded session: \(session)\n")
                 self.user = session.user
                 fetchUserRole(userId: session.user.id.uuidString)
             } catch {
-                debugLog.append("Failed to load user: \(error)\n")
                 self.user = nil
                 self.userRole = nil
             }
@@ -1732,7 +1782,6 @@ struct DashboardView: View {
         Task {
             do {
                 let session = try await client.auth.signIn(email: email, password: password)
-                debugLog.append("Signed in, session: \(session)\n")
                 DispatchQueue.main.async {
                     self.user = session.user
                     fetchUserRole(userId: session.user.id.uuidString)
@@ -1752,7 +1801,6 @@ struct DashboardView: View {
         Task {
             do {
                 let session = try await client.auth.signUp(email: email, password: password)
-                debugLog.append("Signed up, session: \(session)\n")
                 let user = session.user
                 // Insert into users table
                 let userName = name.isEmpty ? (user.email ?? "") : name
@@ -1778,7 +1826,6 @@ struct DashboardView: View {
         Task {
             do {
                 try await client.auth.signOut()
-                debugLog.append("Logged out\n")
                 DispatchQueue.main.async {
                     self.user = nil
                     self.userRole = nil
@@ -1793,25 +1840,21 @@ struct DashboardView: View {
     func fetchUserRole(userId: String) {
         Task {
             do {
-                debugLog.append("Fetching user role for id: \(userId)\n")
                 let response = try await client
                     .from("users")
                     .select("role")
                     .eq("id", value: userId)
                     .single()
                     .execute()
-                debugLog.append("User role response: \(String(data: response.data, encoding: .utf8) ?? "nil")\n")
                 if let data = try? JSONSerialization.jsonObject(with: response.data, options: []) as? [String: Any],
                    let role = data["role"] as? String {
-                    debugLog.append("Fetched user role: \(role)\n")
                     DispatchQueue.main.async {
                         self.userRole = role
                     }
                 } else {
-                    debugLog.append("Role not found in response\n")
+                    self.userRole = nil
                 }
             } catch {
-                debugLog.append("Failed to fetch user role: \(error)\n")
                 DispatchQueue.main.async {
                     self.userRole = nil
                 }
@@ -2621,13 +2664,13 @@ struct VenueDetailsModernView: View {
     @State private var showDeleteConfirmation = false
     @State private var isDeleting = false
     var onVenueUpdated: (() -> Void)? = nil
+    var onClose: (() -> Void)? = nil
 
     var body: some View {
         ZStack {
             Color.secondaryBlue.ignoresSafeArea()
-            ScrollView {
-                VStack(spacing: 0) {
-                    // Header Image with venue name overlay
+            VStack(spacing: 0) {
+                ZStack(alignment: .topTrailing) {
                     if let photo = venue.photo, !photo.isEmpty, photo != "NULL" {
                         ZStack(alignment: .bottomLeading) {
                             AsyncImage(
@@ -2665,7 +2708,20 @@ struct VenueDetailsModernView: View {
                             .frame(maxWidth: .infinity, alignment: .bottomLeading)
                         }
                     }
+                    // Close button in top right
+                    if let onClose = onClose {
+                        Button(action: { onClose() }) {
+                            Image(systemName: "xmark.circle.fill")
+                                .font(.title)
+                                .foregroundColor(.white)
+                                .shadow(radius: 2)
+                                .padding(12)
+                        }
+                        .accessibilityLabel("Close")
+                    }
+                }
 
+                ScrollView {
                     VStack(alignment: .leading, spacing: 18) {
                         // Edit/Delete buttons for admin roles
                         if userRole == "superadmin" || userRole == "venueadmin" {
